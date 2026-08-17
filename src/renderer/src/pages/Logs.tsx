@@ -1,9 +1,11 @@
 import React from 'react';
-import { Terminal, RefreshCw, Filter } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { useLogsStore } from '../store/useLogsStore';
+import { useTranslation } from '../locales/useTranslation';
 
 export const Logs: React.FC = () => {
   const { logs, fetchLogs, isLoading } = useLogsStore();
+  const { t } = useTranslation();
 
   React.useEffect(() => {
     fetchLogs();
@@ -13,8 +15,8 @@ export const Logs: React.FC = () => {
     <div className="space-y-4 max-w-6xl mx-auto select-none">
       <div className="flex items-center justify-between bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
         <div>
-          <h1 className="text-sm font-black text-slate-900 uppercase tracking-wider">System Diagnostics & Hardware Audit Log</h1>
-          <p className="text-xs text-slate-500 font-medium font-sans">Real-time Winston logger outputs for installation, spooler, driver, and print actions</p>
+          <h1 className="text-sm font-black text-slate-900 uppercase tracking-wider">{t.logs.title}</h1>
+          <p className="text-xs text-slate-500 font-medium font-sans">{t.logs.subtitle}</p>
         </div>
         <button
           onClick={() => fetchLogs()}
@@ -22,7 +24,7 @@ export const Logs: React.FC = () => {
           className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all"
         >
           <RefreshCw className={`w-3.5 h-3.5 text-blue-600 ${isLoading ? 'animate-spin' : ''}`} />
-          <span>Refresh Logs</span>
+          <span>{t.logs.refreshLogs}</span>
         </button>
       </div>
 
@@ -31,10 +33,10 @@ export const Logs: React.FC = () => {
           <table className="w-full text-left text-xs font-mono">
             <thead className="bg-slate-100 text-slate-600 uppercase text-[10px] font-extrabold border-b border-slate-200">
               <tr>
-                <th className="p-2.5">Timestamp</th>
-                <th className="p-2.5">Level</th>
-                <th className="p-2.5">Action Type</th>
-                <th className="p-2.5">Message</th>
+                <th className="p-2.5">{t.logs.timestamp}</th>
+                <th className="p-2.5">{t.logs.level}</th>
+                <th className="p-2.5">{t.logs.actionType}</th>
+                <th className="p-2.5">{t.logs.message}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-800">
@@ -57,7 +59,7 @@ export const Logs: React.FC = () => {
               {logs.length === 0 && (
                 <tr>
                   <td colSpan={4} className="p-6 text-center text-slate-500 font-sans text-xs">
-                    No diagnostic logs recorded yet.
+                    {t.logs.noLogs}
                   </td>
                 </tr>
               )}

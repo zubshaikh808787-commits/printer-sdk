@@ -3,37 +3,42 @@ import {
   Printer,
   CheckCircle2,
   AlertCircle,
-  Zap,
   Sparkles,
-  Star,
   RefreshCw,
   Usb,
   Bluetooth,
-  ShieldCheck,
   FileText,
   Trash2,
-  AlertTriangle,
   HardDriveDownload,
   PlusCircle,
-  StarOff,
-  List as ListIcon,
-  LayoutGrid,
+  Star,
+  Settings as SettingsIcon,
+  HelpCircle,
+  Sliders,
+  ExternalLink,
   ChevronRight,
-  Tag,
+  Info,
+  Check,
 } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
 import { usePrinterStore } from '../store/usePrinterStore';
 import { RemovePrinterModal } from '../components/RemovePrinterModal';
 import { ConnectBluetoothModal } from '../components/ConnectBluetoothModal';
 import { ConnectionType } from '@shared/types';
+import { useTranslation } from '../locales/useTranslation';
+import { useTheme } from '../context/ThemeContext';
 
 export const Dashboard: React.FC = () => {
+  const { t } = useTranslation();
+  const { isDark } = useTheme();
+  const navigate = useNavigate();
+
   const {
     v1State,
     osPrinters,
     savedPrinters,
     defaultPrinterId,
-    toastMessage,
     initV1Orchestrator,
     startV1Pipeline,
     resetAndScanV1,
@@ -41,31 +46,27 @@ export const Dashboard: React.FC = () => {
     fetchOsPrinters,
     fetchSavedPrinters,
     savePrinter,
-    uninstallDriver,
-    removeSavedPrinter,
-    clearSavedPrinters,
     setSavedDefaultPrinter,
-    removeSavedDefaultPrinter,
     calibratePrinter,
     isScanning,
-    setIsScanning,
     bluetoothState,
     initBluetooth,
     disconnectBluetoothDevice,
-    connectBluetoothDevice,
     triggerBluetoothTestPrint,
     forgetBluetoothDevice,
   } = usePrinterStore();
 
-  const [testPrintStatus, setTestPrintStatus] = useState<string | null>(null);
-  const [platformInfo, setPlatformInfo] = useState<{ platform: string; arch: string }>({ platform: 'win32', arch: 'x64' });
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isBluetoothModalOpen, setIsBluetoothModalOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
-  const [rowTestPrintingId, setRowTestPrintingId] = useState<string | null>(null);
-
-  // Removal Modal State
   const [isRemovingPrinter, setIsRemovingPrinter] = useState(false);
-  const [removeModalState, setRemoveModalState] = useState<{ isOpen: boolean; id: string; name: string; isDefault: boolean; connectionType: ConnectionType; rawDeviceId: string }>({
+  const [removeModalState, setRemoveModalState] = useState<{
+    isOpen: boolean;
+    id: string;
+    name: string;
+    isDefault: boolean;
+    connectionType: ConnectionType;
+    rawDeviceId: string;
+  }>({
     isOpen: false,
     id: '',
     name: '',
@@ -79,54 +80,29 @@ export const Dashboard: React.FC = () => {
     initBluetooth();
     fetchOsPrinters();
     fetchSavedPrinters();
+  }, [initV1Orchestrator, initBluetooth, fetchOsPrinters, fetchSavedPrinters]);
 
-    if (window.seznikApi) {
-      window.seznikApi.getSystemInfo().then(info => setPlatformInfo(info));
-    }
-  }, []);
+  const isUsbConnected = Boolean(v1State.usbConnected);
+  const isUsbMatched = isUsbConnected && Boolean(v1State.brand) && v1State.brand !== 'UNSUPPORTED';
+  const isBtConnected = Boolean(bluetoothState.connectedQueueName || bluetoothState.connectedDeviceId);
 
-  const handleRunV1TestPrint = async () => {
-    setTestPrintStatus('Executing real physical test print job over USB...');
+  const activePrinterName =
+    v1State.queueName ||
+    (isUsbConnected ? `${v1State.brand} USB Printer` : null) ||
+    (osPrinters.length > 0 ? osPrinters[0].name : null);
+
+  const handleRunTestPrint = async () => {
+    setStatusMessage(t.dashboard.printing || 'Printing test page...');
     const res = await triggerV1TestPrint();
-    setTestPrintStatus(res.message);
-    setTimeout(() => setTestPrintStatus(null), 5000);
+    setStatusMessage(res?.message || t.guide.step4Desc || 'Test page sent to printer! ✓');
+    setTimeout(() => setStatusMessage(null), 4000);
   };
 
-  const handleCalibrate = async () => {
-    const targetName = v1State.queueName || (osPrinters.length > 0 ? osPrinters[0].name : null);
-    if (!targetName) {
-      setTestPrintStatus('No connected USB printer found to calibrate.');
-      setTimeout(() => setTestPrintStatus(null), 4000);
-      return;
-    }
-
-    setTestPrintStatus(`Calibrating USB media sensors on "${targetName}"...`);
-    const res = await calibratePrinter(targetName);
-    setTestPrintStatus(res.message);
-    setTimeout(() => setTestPrintStatus(null), 4000);
-  };
-
-  const handleSaveActivePrinter = async (targetName?: string) => {
-    const nameToSave = targetName || v1State.queueName || (osPrinters.length > 0 ? osPrinters[0].name : 'USB Printer');
-    if (!nameToSave) return;
-
-    const savedId = `saved-${nameToSave.replace(/\s+/g, '-').toLowerCase()}`;
-    const brandType = (nameToSave.toLowerCase().includes('pos58') || nameToSave.toLowerCase().includes('veer') ? 'RECEIPT' : 'LABEL') as any;
-
-    const res = await savePrinter({
-      id: savedId,
-      name: nameToSave,
-      driverName: nameToSave,
-      portName: 'USB001',
-      connectionType: 'USB',
-      isDefault: true,
-      printerType: brandType,
-    });
-
-    await fetchSavedPrinters();
-    await fetchOsPrinters();
-    setTestPrintStatus(`Printer "${nameToSave}" saved to SEZNIK Printer Manager & OS Default ✓`);
-    setTimeout(() => setTestPrintStatus(null), 4000);
+  const handleRunBtTestPrint = async () => {
+    setStatusMessage(t.dashboard.printing || 'Printing wireless Bluetooth receipt...');
+    await triggerBluetoothTestPrint();
+    setStatusMessage(t.guide.stepB5Desc || 'Wireless test receipt printed successfully! ✓');
+    setTimeout(() => setStatusMessage(null), 4000);
   };
 
   const handleConfirmRemove = async () => {
@@ -136,758 +112,355 @@ export const Dashboard: React.FC = () => {
     if (!targetId) return;
 
     if (targetConnType === 'BLUETOOTH') {
-      // Bluetooth printers need their own cleanup path — it uninstalls the
-      // real Windows printer queue via the same service that created it,
-      // instead of the USB-oriented driver-package uninstaller.
       await forgetBluetoothDevice(rawDeviceId || targetId);
-      setTestPrintStatus(`Printer "${targetName}" removed successfully ✓`);
-      setTimeout(() => setTestPrintStatus(null), 3000);
+      setStatusMessage(`${t.dashboard.savedPrinters}: "${targetName}" removed ✓`);
+      setTimeout(() => setStatusMessage(null), 3000);
       return;
     }
 
-    // 1. Instantly update UI state (<10ms single-click response)
-    await removeSavedPrinter(targetId);
-
-    // 2. Perform OS queue unregistration asynchronously in background
-    if (uninstallDriver && targetName) {
-      uninstallDriver(targetName).catch(() => {});
-    }
-
-    setTestPrintStatus(`Printer "${targetName}" removed successfully ✓`);
-    setTimeout(() => setTestPrintStatus(null), 3000);
-
-    // Refresh list in background
-    if (v1State.queueName?.toLowerCase() === targetName.toLowerCase()) {
-      resetAndScanV1().catch(() => {});
-    } else {
-      fetchOsPrinters().catch(() => {});
-      fetchSavedPrinters().catch(() => {});
-    }
-  };
-
-  /** Test-prints an arbitrary saved printer row — not just "the currently active" one. */
-  const handleRowTestPrint = async (prt: any) => {
-    setRowTestPrintingId(prt.id);
     try {
-      if (prt.connectionType === 'BLUETOOTH') {
-        if (bluetoothState.connectedQueueName === prt.name) {
-          await triggerBluetoothTestPrint();
-          setTestPrintStatus(`Test print sent to "${prt.name}" over Bluetooth.`);
-        } else {
-          const brand = prt.printerType === 'LABEL' ? 'JOSH' : prt.printerType === 'RECEIPT_AND_LABEL' ? 'DEV' : 'VEER';
-          await connectBluetoothDevice(prt.macAddress || (prt.id || '').replace('seznik-bt-', ''), brand);
-          setTestPrintStatus(`Reconnecting "${prt.name}" over Bluetooth and sending a test print...`);
-        }
-      } else if (window.seznikApi) {
-        const type = prt.printerType === 'LABEL' ? 'LABEL' : 'RECEIPT';
-        const res = await window.seznikApi.printRawEscPos(prt.name, type);
-        setTestPrintStatus(res.message);
+      setIsRemovingPrinter(true);
+      await usePrinterStore.getState().removeSavedPrinter(targetId);
+      if (window.seznikApi?.uninstallDriver && targetName) {
+        await window.seznikApi.uninstallDriver(targetName);
       }
+      await fetchSavedPrinters();
+      await fetchOsPrinters();
+      setStatusMessage(`${t.dashboard.savedPrinters}: "${targetName}" removed ✓`);
+    } catch {
+      setStatusMessage(`Failed to remove printer.`);
     } finally {
-      setTimeout(() => setTestPrintStatus(null), 4000);
-      setRowTestPrintingId(null);
+      setIsRemovingPrinter(false);
+      setTimeout(() => setStatusMessage(null), 3000);
     }
   };
-
-  const handleSetDefaultPrinter = async (id: string) => {
-    const res = await setSavedDefaultPrinter(id);
-    setTestPrintStatus(res.message);
-    setTimeout(() => setTestPrintStatus(null), 4000);
-  };
-
-  const isUsbConnected = v1State.usbConnected;
-  const currentPrinterName = isUsbConnected ? (v1State.queueName || v1State.detectedHardwareName || 'USB PRINTER CONNECTED') : null;
-
-  // Derive display list from savedPrinters (multi-printer list) or active OS spooler queues
-  const displayList = savedPrinters.length > 0
-    ? savedPrinters.map(sp => {
-        const isThisConnected = sp.connectionType === 'BLUETOOTH'
-          ? bluetoothState.connectedQueueName?.toLowerCase() === sp.name.toLowerCase()
-          : isUsbConnected && (
-              v1State.queueName?.toLowerCase() === sp.name.toLowerCase() ||
-              v1State.detectedHardwareName?.toLowerCase() === sp.name.toLowerCase() ||
-              osPrinters.some(op => op.name.toLowerCase() === sp.name.toLowerCase())
-            );
-        return {
-          ...sp,
-          isConnected: isThisConnected,
-        };
-      })
-    : (osPrinters.length > 0
-        ? osPrinters.map(p => ({
-            id: `os-${p.name}`,
-            name: p.name,
-            driverName: p.driverName,
-            portName: p.portName,
-            connectionType: 'USB',
-            isDefault: p.isDefault,
-            printerType: (p.name.toLowerCase().includes('dp27') || p.name.toLowerCase().includes('josh') ? 'LABEL' : 'RECEIPT') as any,
-            savedAt: new Date().toISOString(),
-            isConnected: isUsbConnected,
-          }))
-        : (v1State.queueName ? [{
-            id: `v1-${v1State.queueName}`,
-            name: v1State.queueName,
-            driverName: v1State.queueName,
-            portName: 'USB001',
-            connectionType: 'USB',
-            isDefault: v1State.isDefault,
-            printerType: (v1State.brand === 'JOSH' ? 'LABEL' : 'RECEIPT') as any,
-            savedAt: new Date().toISOString(),
-            isConnected: isUsbConnected,
-          }] : [])
-      );
 
   return (
-    <div className="space-y-4 max-w-6xl mx-auto select-none text-slate-800">
-      {/* Toast Notification Banner */}
-      {(toastMessage || testPrintStatus) && (
-        <motion.div
-          initial={{ opacity: 0, y: -5 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="p-3 rounded-xl bg-slate-900 text-white font-semibold text-xs border border-slate-700 shadow-md flex items-center justify-between"
+    <div className="space-y-6">
+      {/* ACTION STATUS TOAST NOTIFICATION */}
+      <AnimatePresence>
+        {statusMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="p-4 rounded-2xl bg-emerald-600 text-white font-black text-xs md:text-sm flex items-center justify-between shadow-lg shadow-emerald-600/20"
+          >
+            <div className="flex items-center gap-2.5">
+              <CheckCircle2 className="w-5 h-5 shrink-0" />
+              <span>{statusMessage}</span>
+            </div>
+            <button
+              onClick={() => setStatusMessage(null)}
+              className="text-xs bg-emerald-700 hover:bg-emerald-800 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+            >
+              ✕
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* TOP BIG PROMINENT ACTION BAR (FOR NON-TECHNICAL USERS) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+        {/* ACTION 1: PRINT TEST PAGE */}
+        <button
+          onClick={handleRunTestPrint}
+          className="p-5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-600/20 transition-all flex flex-col justify-between gap-3 text-left cursor-pointer group"
         >
-          <div className="flex items-center space-x-2">
-            <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span>{toastMessage || testPrintStatus}</span>
-          </div>
-          <button
-            onClick={() => setTestPrintStatus(null)}
-            className="text-slate-400 hover:text-white font-bold text-[11px]"
-          >
-            Dismiss
-          </button>
-        </motion.div>
-      )}
-
-      {/* TOOLBAR: breadcrumb, view toggle, quick actions */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-400">
-          <span>Printers</span>
-          <ChevronRight className="w-3.5 h-3.5" />
-          <span className="text-slate-800">Device Overview</span>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <div className="flex rounded-lg border border-slate-200 bg-white overflow-hidden">
-            <button
-              onClick={() => setViewMode('list')}
-              className={`px-2.5 py-1.5 text-[11px] font-bold flex items-center gap-1.5 transition-all ${viewMode === 'list' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
-            >
-              <ListIcon className="w-3.5 h-3.5" /> List View
-            </button>
-            <button
-              onClick={() => setViewMode('grid')}
-              className={`px-2.5 py-1.5 text-[11px] font-bold flex items-center gap-1.5 border-l border-slate-200 transition-all ${viewMode === 'grid' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
-            >
-              <LayoutGrid className="w-3.5 h-3.5" /> Grid
-            </button>
-          </div>
-
-          <button
-            onClick={() => setIsBluetoothModalOpen(true)}
-            className="px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 text-slate-700 font-bold text-[11px] border border-slate-200 flex items-center gap-1.5 transition-all"
-          >
-            <Bluetooth className="w-3.5 h-3.5 text-blue-600" /> Pair Bluetooth
-          </button>
-
-          <button
-            onClick={() => startV1Pipeline()}
-            className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${v1State.step !== 'SETUP_COMPLETE' && v1State.step !== 'NO_USB_CONNECTED' ? 'animate-spin' : ''}`} /> Scan Ports
-          </button>
-        </div>
-      </div>
-
-      {/* ACTIVE PRINTERS: default + currently-connected printers at a glance */}
-      {displayList.some((p: any) => p.isDefault || p.isConnected) && (
-        <div className="space-y-2">
-          <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider px-0.5">
-            Active Printers • {displayList.filter((p: any) => p.isDefault || p.isConnected).length}
-          </span>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {displayList
-              .filter((p: any) => p.isDefault || p.isConnected)
-              .map((prt: any, idx: number) => {
-                const isBt = prt.connectionType === 'BLUETOOTH';
-                return (
-                  <div key={prt.id || idx} className="p-4 bg-white rounded-xl border border-slate-200 shadow-sm">
-                    <div className="flex items-center justify-between mb-3">
-                      <span className={`inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wide ${isBt ? 'text-blue-600' : 'text-slate-500'}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${isBt ? 'bg-blue-500' : 'bg-slate-400'}`}></span>
-                        {prt.connectionType}
-                      </span>
-                      {prt.isDefault && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-blue-50 text-blue-700 border border-blue-200">
-                          <Star className="w-2.5 h-2.5 fill-blue-600 text-blue-600" /> Default
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div className="w-11 h-11 rounded-xl bg-blue-600 flex items-center justify-center text-white shrink-0">
-                        <Printer className="w-5 h-5" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="font-extrabold text-slate-900 text-sm truncate">{prt.name}</p>
-                        <p className="text-[10px] text-slate-500 font-medium truncate">
-                          {prt.printerType === 'LABEL' ? '50x50mm Label (TSPL)' : '58mm Receipt (ESC/POS)'} • <span className="font-mono">{prt.portName}</span>
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-          </div>
-        </div>
-      )}
-
-      {/* COMPACT REAL HARDWARE STATUS BAR */}
-      <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center space-x-3.5">
-          <div className={`p-2.5 rounded-xl ${isUsbConnected ? (v1State.step === 'UNSUPPORTED_PRINTER' ? 'bg-amber-50 text-amber-600 border border-amber-200' : 'bg-emerald-50 text-emerald-600 border border-emerald-200') : 'bg-rose-50 text-rose-600 border border-rose-200'}`}>
-            <Usb className="w-5 h-5" />
+          <div className="flex items-center justify-between">
+            <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
+              <FileText className="w-5 h-5 text-white" />
+            </div>
+            <span className="text-[11px] font-extrabold uppercase bg-white/20 px-2 py-0.5 rounded-full">
+              {t.dashboard.actions}
+            </span>
           </div>
           <div>
-            <div className="flex items-center space-x-2">
-              <h2 className="text-sm font-black uppercase text-slate-900 tracking-wider">
-                {isUsbConnected
-                  ? (v1State.step === 'UNSUPPORTED_PRINTER' ? 'UNSUPPORTED USB PRINTER DETECTED' : currentPrinterName)
-                  : 'NO USB PRINTER DETECTED.'}
-              </h2>
-              {isUsbConnected ? (
-                v1State.step === 'UNSUPPORTED_PRINTER' ? (
-                  <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-amber-100 text-amber-800 border border-amber-300">
-                    UNSUPPORTED MODEL
-                  </span>
-                ) : (
-                  <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-600" /> REAL USB CONNECTED
-                  </span>
-                )
-              ) : (
-                <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-rose-100 text-rose-800 border border-rose-300">
-                  DISCONNECTED
-                </span>
-              )}
-            </div>
-            <p className="text-[11px] text-slate-500 font-medium mt-0.5">
-              Auto Hardware Brand: <strong className="text-blue-700 font-extrabold">{isUsbConnected ? v1State.brand : 'NONE'}</strong> | Spooler Queue: <span className="font-mono text-slate-700 font-bold">{v1State.queueName || 'None'}</span>
+            <h3 className="text-base font-black tracking-tight">{t.dashboard.testPrint}</h3>
+            <p className="text-xs text-emerald-100 font-medium mt-0.5">
+              {t.guide.step4Desc}
             </p>
           </div>
-        </div>
+        </button>
 
-        {/* Action Controls */}
-        <div className="flex items-center space-x-2">
-          {isUsbConnected && v1State.queueName && (
-            <button
-              onClick={() => handleSaveActivePrinter()}
-              className="px-3.5 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-extrabold text-xs shadow-xs transition-all flex items-center gap-1.5"
-              title="Save current printer configuration to app storage & default printer"
-            >
-              <HardDriveDownload className="w-3.5 h-3.5" />
-              <span>Save Option</span>
-            </button>
-          )}
+        {/* ACTION 2: SCAN USB PRINTER */}
+        <button
+          onClick={() => startV1Pipeline()}
+          disabled={isScanning}
+          className="p-5 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white shadow-md shadow-blue-600/20 transition-all flex flex-col justify-between gap-3 text-left cursor-pointer disabled:opacity-50 group"
+        >
+          <div className="flex items-center justify-between">
+            <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
+              <RefreshCw className={`w-5 h-5 text-white ${isScanning ? 'animate-spin' : ''}`} />
+            </div>
+            <span className="text-[11px] font-extrabold uppercase bg-white/20 px-2 py-0.5 rounded-full">
+              {isScanning ? t.dashboard.scanning : t.dashboard.reScanUsb}
+            </span>
+          </div>
+          <div>
+            <h3 className="text-base font-black tracking-tight">{t.dashboard.reScanUsb}</h3>
+            <p className="text-xs text-blue-100 font-medium mt-0.5">
+              {t.dashboard.scanPrinters}
+            </p>
+          </div>
+        </button>
 
-          <button
-            onClick={() => startV1Pipeline()}
-            className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs transition-all flex items-center gap-1.5"
-            title="Re-scan current physical USB connection"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${v1State.step !== 'SETUP_COMPLETE' && v1State.step !== 'NO_USB_CONNECTED' ? 'animate-spin' : ''}`} />
-            <span>Re-Scan USB</span>
-          </button>
+        {/* ACTION 3: PAIR BLUETOOTH (VEER) */}
+        <button
+          onClick={() => setIsBluetoothModalOpen(true)}
+          className="p-5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/20 transition-all flex flex-col justify-between gap-3 text-left cursor-pointer group"
+        >
+          <div className="flex items-center justify-between">
+            <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
+              <Bluetooth className="w-5 h-5 text-white" />
+            </div>
+            <span className="text-[11px] font-extrabold uppercase bg-white/20 px-2 py-0.5 rounded-full">
+              {t.guide.sectionBTitle}
+            </span>
+          </div>
+          <div>
+            <h3 className="text-base font-black tracking-tight">{t.dashboard.connectBluetooth}</h3>
+            <p className="text-xs text-indigo-100 font-medium mt-0.5">
+              {t.guide.stepB4Desc}
+            </p>
+          </div>
+        </button>
 
-          <button
-            onClick={() => resetAndScanV1()}
-            className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs shadow-xs transition-all flex items-center gap-1.5"
-            title="Clear cached hardware state & scan for a new/different physical USB device"
-          >
-            <PlusCircle className="w-3.5 h-3.5" />
-            <span>Add Different Device</span>
-          </button>
-
-          {defaultPrinterId && (
-            <button
-              onClick={async () => {
-                const res = await removeSavedDefaultPrinter();
-                setTestPrintStatus(res.message);
-                setTimeout(() => setTestPrintStatus(null), 4000);
-              }}
-              className="px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-600 hover:text-white text-amber-800 font-bold text-xs border border-amber-200 transition-all flex items-center gap-1.5"
-              title="Remove default printer designation"
-            >
-              <StarOff className="w-3.5 h-3.5 text-amber-600 group-hover:text-white" />
-              <span>Remove Default</span>
-            </button>
-          )}
-
-          <button
-            onClick={handleRunV1TestPrint}
-            disabled={!isUsbConnected && displayList.length === 0 && !v1State.queueName}
-            className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-extrabold text-xs shadow-xs transition-all flex items-center gap-1.5"
-          >
-            <FileText className="w-3.5 h-3.5" />
-            <span>REAL TEST PRINT</span>
-          </button>
-
-          <button
-            onClick={handleCalibrate}
-            disabled={!isUsbConnected}
-            className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 font-bold text-xs border border-slate-300 transition-all flex items-center gap-1.5"
-          >
-            <RefreshCw className="w-3.5 h-3.5 text-blue-600" />
-            <span>Calibrate</span>
-          </button>
-        </div>
+        {/* ACTION 4: SETUP GUIDE & HELP */}
+        <button
+          onClick={() => navigate('/guide')}
+          className="p-5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white shadow-md transition-all flex flex-col justify-between gap-3 text-left cursor-pointer border border-slate-700 group"
+        >
+          <div className="flex items-center justify-between">
+            <div className="w-10 h-10 rounded-xl bg-slate-700 flex items-center justify-center">
+              <HelpCircle className="w-5 h-5 text-sky-400" />
+            </div>
+            <span className="text-[11px] font-extrabold uppercase bg-slate-700 px-2 py-0.5 rounded-full text-slate-300">
+              {t.nav.system}
+            </span>
+          </div>
+          <div>
+            <h3 className="text-base font-black tracking-tight">{t.guide.title}</h3>
+            <p className="text-xs text-slate-400 font-medium mt-0.5">
+              {t.guide.subtitle}
+            </p>
+          </div>
+        </button>
       </div>
 
-      {/* AUTOMATED V1 FLOW STEPPER */}
-      <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-sm space-y-3">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-          <div className="flex items-center space-x-2">
-            <Sparkles className="w-4 h-4 text-blue-600" />
-            <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">SEZNIK V1 AUTOMATED SETUP PIPELINE</h3>
-          </div>
-          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
-            Progress: {v1State.progressPercent}%
-          </span>
-        </div>
+      {/* AT-A-GLANCE PRINTER STATUS CARDS */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* USB PRINTER STATUS CARD */}
+        <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs transition-colors space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                isUsbConnected
+                  ? 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-400'
+              }`}>
+                <Usb className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-slate-900 dark:text-white">
+                  {t.nav.usbConnected}
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                  {t.guide.sectionATitle}
+                </p>
+              </div>
+            </div>
 
-        {/* Message Alert Banner */}
-        <div className={`p-3 rounded-xl border text-xs font-medium flex items-center space-x-2.5 ${
-          v1State.step === 'UNSUPPORTED_PRINTER' ? 'bg-amber-50 border-amber-200 text-amber-900 font-extrabold' :
-          v1State.step === 'NO_USB_CONNECTED' ? 'bg-slate-100 border-slate-200 text-slate-700' :
-          v1State.step === 'SETUP_COMPLETE' ? 'bg-emerald-50 border-emerald-200 text-emerald-900 font-extrabold' :
-          v1State.step === 'ERROR' ? 'bg-rose-50 border-rose-200 text-rose-900 font-bold' : 'bg-blue-50 border-blue-200 text-blue-900 font-bold'
-        }`}>
-          {v1State.step === 'UNSUPPORTED_PRINTER' && <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />}
-          {v1State.step === 'NO_USB_CONNECTED' && <Usb className="w-4 h-4 text-slate-500 shrink-0" />}
-          {v1State.step === 'SETUP_COMPLETE' && <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />}
-          {v1State.step === 'ERROR' && <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />}
-          {v1State.step !== 'UNSUPPORTED_PRINTER' && v1State.step !== 'NO_USB_CONNECTED' && v1State.step !== 'SETUP_COMPLETE' && v1State.step !== 'ERROR' && (
-            <RefreshCw className="w-4 h-4 text-blue-600 shrink-0 animate-spin" />
-          )}
-          <span className="flex-1">{v1State.stepMessage}</span>
-        </div>
+            <span className={`px-3 py-1 rounded-full text-xs font-black uppercase flex items-center gap-1.5 ${
+              isUsbConnected
+                ? 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700'
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${isUsbConnected ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+              <span>{isUsbConnected ? t.guide.usbStatusConnected : t.dashboard.disconnected}</span>
+            </span>
+          </div>
 
-        {/* Progress Bar */}
-        <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
-          <div
-            className={`h-full transition-all duration-500 ${v1State.step === 'SETUP_COMPLETE' ? 'bg-emerald-600' : v1State.step === 'UNSUPPORTED_PRINTER' ? 'bg-amber-500' : v1State.step === 'ERROR' ? 'bg-rose-600' : 'bg-blue-600'}`}
-            style={{ width: `${v1State.progressPercent}%` }}
-          />
-        </div>
-
-        {/* Automated Flow Steps */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2 pt-2 text-[10px] font-extrabold text-center select-none">
-          <div className={`p-2 rounded-lg border transition-all ${v1State.usbConnected ? 'bg-emerald-50 text-emerald-800 border-emerald-300 font-black shadow-sm' : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
-            1. USB Detect
-          </div>
-          <div className={`p-2 rounded-lg border transition-all ${v1State.brand && v1State.brand !== 'UNSUPPORTED' ? 'bg-emerald-50 text-emerald-800 border-emerald-300 font-black shadow-sm' : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
-            2. Identify {v1State.brand && v1State.brand !== 'UNSUPPORTED' ? `[${v1State.brand}]` : ''}
-          </div>
-          <div className={`p-2 rounded-lg border transition-all ${v1State.driverInstalled ? 'bg-emerald-50 text-emerald-800 border-emerald-300 font-black shadow-sm' : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
-            3. Driver Setup
-          </div>
-          <div className={`p-2 rounded-lg border transition-all ${v1State.queueName ? 'bg-emerald-50 text-emerald-800 border-emerald-300 font-black shadow-sm' : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
-            4. Configure Queue
-          </div>
-          <div className={`p-2 rounded-lg border transition-all ${(v1State.savedPrinterId || ['SAVING_PRINTER', 'SETTING_DEFAULT', 'SETUP_COMPLETE'].includes(v1State.step)) ? 'bg-emerald-50 text-emerald-800 border-emerald-300 font-black shadow-sm' : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
-            5. Save Storage
-          </div>
-          <div className={`p-2 rounded-lg border transition-all ${(v1State.isDefault || v1State.step === 'SETUP_COMPLETE') ? 'bg-emerald-50 text-emerald-800 border-emerald-300 font-black shadow-sm' : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
-            6. Set Default
-          </div>
-          <div className={`p-2 rounded-lg border transition-all ${v1State.step === 'SETUP_COMPLETE' ? 'bg-emerald-50 text-emerald-800 border-emerald-300 font-black shadow-sm' : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
-            7. Setup Complete {v1State.testPrintSuccess ? '✓ (1 Label)' : ''}
-          </div>
-        </div>
-      </div>
-
-      {/* OPTIONAL NEXT STEP: BLUETOOTH PAIRING (available once USB setup has completed at least once) */}
-      {(v1State.step === 'SETUP_COMPLETE' || bluetoothState.connectedQueueName) && (
-        <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center space-x-3.5">
-            <div className={`p-2.5 rounded-xl ${bluetoothState.connectedQueueName ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'bg-blue-50 text-blue-600 border border-blue-200'}`}>
-              <Bluetooth className="w-5 h-5" />
+          <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60 flex items-center justify-between text-xs">
+            <div>
+              <span className="text-slate-400 font-bold">{t.dashboard.autoHardwareBrand}: </span>
+              <strong className="text-slate-800 dark:text-white font-extrabold">
+                {isUsbConnected ? v1State.brand : t.dashboard.none}
+              </strong>
             </div>
             <div>
-              <div className="flex items-center space-x-2">
-                <h2 className="text-sm font-black uppercase text-slate-900 tracking-wider">
-                  {bluetoothState.connectedQueueName || 'Optional: Connect via Bluetooth'}
-                </h2>
-                {bluetoothState.connectedQueueName ? (
-                  <span
-                    title={'Windows Bluetooth settings will still show "Not connected" for this printer — that\'s normal for Bluetooth SPP printers and doesn\'t mean it stopped working.'}
-                    className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1 cursor-help"
-                  >
-                    <CheckCircle2 className="w-3 h-3 text-emerald-600" /> INSTALLED IN WINDOWS
-                  </span>
-                ) : (
-                  <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-blue-50 text-blue-700 border border-blue-200">
-                    STEP 2
-                  </span>
-                )}
-              </div>
-              <p className="text-[11px] text-slate-500 font-medium mt-0.5">
-                {bluetoothState.connectedQueueName
-                  ? `On ${bluetoothState.connectedComPort} — visible in any app's Print dialog (Ctrl+P)${bluetoothState.testPrintSuccess ? ', test receipt verified ✓' : ''}`
-                  : 'USB setup is done. Pair the same printer over Bluetooth so it shows up in Ctrl+P everywhere, not just SEZNIK.'}
-              </p>
+              <span className="text-slate-400 font-bold">{t.dashboard.spoolerQueue}: </span>
+              <span className="font-mono text-slate-700 dark:text-slate-300 font-bold">
+                {v1State.queueName || t.dashboard.defaultBadge}
+              </span>
             </div>
           </div>
+        </div>
 
-          <div className="flex items-center space-x-2">
-            {bluetoothState.connectedQueueName ? (
-              <>
-                <button
-                  onClick={() => setIsBluetoothModalOpen(true)}
-                  className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs border border-slate-200 transition-all flex items-center gap-1.5"
-                >
-                  <Bluetooth className="w-3.5 h-3.5 text-blue-600" />
-                  <span>Manage</span>
-                </button>
-                <button
-                  onClick={() => disconnectBluetoothDevice()}
-                  title="Clears SEZNIK's selection only — the printer stays installed in Windows and keeps working from Ctrl+P"
-                  className="px-3.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-600 hover:text-white text-rose-700 font-bold text-xs border border-rose-200 transition-all flex items-center gap-1.5"
-                >
-                  <span>Deselect</span>
-                </button>
-              </>
-            ) : (
+        {/* BLUETOOTH WIRELESS STATUS CARD (VEER) */}
+        <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs transition-colors space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                isBtConnected
+                  ? 'bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-400'
+              }`}>
+                <Bluetooth className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-slate-900 dark:text-white">
+                  {t.guide.sectionBTitle}
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                  {t.guide.sectionBSubtitle}
+                </p>
+              </div>
+            </div>
+
+            <span className={`px-3 py-1 rounded-full text-xs font-black uppercase flex items-center gap-1.5 ${
+              isBtConnected
+                ? 'bg-indigo-100 dark:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/30'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700'
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${isBtConnected ? 'bg-indigo-500' : 'bg-slate-400'}`} />
+              <span>{isBtConnected ? t.dashboard.installedInWindows : t.dashboard.disconnected}</span>
+            </span>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60 flex items-center justify-between text-xs">
+            <div>
+              <span className="text-slate-400 font-bold">{t.dashboard.spoolerQueue}: </span>
+              <strong className="text-slate-800 dark:text-white font-extrabold">
+                {bluetoothState.connectedQueueName || 'VEER Bluetooth'}
+              </strong>
+            </div>
+            {isBtConnected && (
               <button
-                onClick={() => setIsBluetoothModalOpen(true)}
-                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs shadow-xs transition-all flex items-center gap-1.5"
+                onClick={handleRunBtTestPrint}
+                className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] transition-all cursor-pointer"
               >
-                <Bluetooth className="w-3.5 h-3.5" />
-                <span>Pair &amp; Connect Bluetooth Printer</span>
+                {t.dashboard.testPrint}
               </button>
             )}
           </div>
         </div>
-      )}
-
-      {/* MAIN TWO-COLUMN DASHBOARD GRID */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* Left Column (7 cols): Real USB Printers List */}
-        <div className="lg:col-span-7 space-y-3">
-          <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-sm space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-              <div className="flex items-center space-x-2">
-                <Printer className="w-4 h-4 text-blue-600" />
-                <h3 className="text-xs font-black uppercase text-slate-900 tracking-wider">All Configured Printers</h3>
-              </div>
-              <div className="flex items-center space-x-2">
-                {savedPrinters.length > 0 && (
-                  <button
-                    onClick={async () => {
-                      await clearSavedPrinters();
-                    }}
-                    className="px-2.5 py-1 rounded bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white text-[11px] font-bold flex items-center gap-1 transition-colors border border-rose-200"
-                    title="Remove all saved printers"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                    <span>Clear All</span>
-                  </button>
-                )}
-                <button
-                  onClick={async () => {
-                    setIsScanning(true);
-                    await fetchOsPrinters();
-                    await fetchSavedPrinters();
-                    setTimeout(() => setIsScanning(false), 500);
-                  }}
-                  disabled={isScanning}
-                  className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold flex items-center gap-1 transition-colors border border-slate-200 disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-3 h-3 text-blue-600 ${isScanning ? 'animate-spin' : ''}`} />
-                  <span>{isScanning ? 'Scanning...' : 'Scan Spooler'}</span>
-                </button>
-              </div>
-            </div>
-
-            {displayList.length > 0 ? (
-              viewMode === 'list' ? (
-                /* TABLE VIEW */
-                <div className="overflow-x-auto -mx-1">
-                  <table className="w-full text-xs border-collapse min-w-[560px]">
-                    <thead>
-                      <tr className="text-[10px] font-black uppercase text-slate-400 tracking-wide border-b border-slate-100">
-                        <th className="text-left font-black px-1 py-2">Printer Name</th>
-                        <th className="text-left font-black px-1 py-2">Port / Interface</th>
-                        <th className="text-left font-black px-1 py-2">Media Type</th>
-                        <th className="text-left font-black px-1 py-2">Status</th>
-                        <th className="text-right font-black px-1 py-2">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {displayList.map((prt: any, idx: number) => {
-                        const prtId = prt.id || `os-${idx}`;
-                        const isDef = prt.isDefault || prtId === defaultPrinterId;
-                        const isBt = prt.connectionType === 'BLUETOOTH';
-                        const isKnown = savedPrinters.some(sp => sp.name.toLowerCase() === prt.name.toLowerCase());
-
-                        return (
-                          <tr key={prtId} className="border-b border-slate-50 hover:bg-slate-50/60 transition-colors">
-                            <td className="px-1 py-2.5">
-                              <div className="flex items-center gap-2">
-                                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isBt ? 'bg-blue-500' : 'bg-slate-400'}`}></span>
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-1.5">
-                                    <span className="font-extrabold text-slate-900 truncate">{prt.name}</span>
-                                    {prt.printerType === 'LABEL' && <Tag className="w-3 h-3 text-indigo-500 shrink-0" />}
-                                  </div>
-                                  <span className="text-[9px] font-bold text-slate-400 uppercase">{prt.connectionType}</span>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="px-1 py-2.5 font-mono text-slate-600 whitespace-nowrap">
-                              {prt.portName || 'USB001'} <span className="text-slate-400">({prt.connectionType})</span>
-                            </td>
-                            <td className="px-1 py-2.5 text-slate-600 whitespace-nowrap">
-                              {prt.printerType === 'LABEL' ? '50x50mm Label (TSPL)' : prt.printerType === 'RECEIPT_AND_LABEL' ? 'Label + Receipt (Dual)' : '58mm Receipt (ESC/POS)'}
-                            </td>
-                            <td className="px-1 py-2.5">
-                              {isDef ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-blue-50 text-blue-700 border border-blue-200">
-                                  <Star className="w-2.5 h-2.5 fill-blue-600 text-blue-600" /> Default
-                                </span>
-                              ) : prt.isConnected ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                  <CheckCircle2 className="w-2.5 h-2.5" /> Ready
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-slate-100 text-slate-500 border border-slate-200">
-                                  Saved
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-1 py-2.5">
-                              <div className="flex items-center justify-end gap-1.5">
-                                {!isKnown ? (
-                                  <button
-                                    onClick={() => handleSaveActivePrinter(prt.name)}
-                                    className="px-2 py-1 rounded bg-teal-50 hover:bg-teal-600 text-teal-700 hover:text-white border border-teal-200 text-[10px] font-bold transition-all"
-                                    title="Save printer configuration"
-                                  >
-                                    Save
-                                  </button>
-                                ) : (
-                                  <>
-                                    <button
-                                      onClick={() => handleRowTestPrint(prt)}
-                                      disabled={rowTestPrintingId === prtId}
-                                      className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 text-[10px] font-bold transition-all"
-                                      title="Send a test print to this printer"
-                                    >
-                                      {rowTestPrintingId === prtId ? 'Printing…' : 'Test Print'}
-                                    </button>
-                                    {!isDef && (
-                                      <button
-                                        onClick={() => handleSetDefaultPrinter(prtId)}
-                                        className="px-2 py-1 rounded bg-blue-50 hover:bg-blue-600 text-blue-700 hover:text-white text-[10px] font-bold transition-all"
-                                      >
-                                        Set Default
-                                      </button>
-                                    )}
-                                  </>
-                                )}
-                                <button
-                                  onClick={() => setRemoveModalState({ isOpen: true, id: prtId, name: prt.name, isDefault: isDef, connectionType: prt.connectionType, rawDeviceId: prt.macAddress || prtId.replace('seznik-bt-', '') })}
-                                  className="p-1.5 rounded bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white transition-all"
-                                  title="Remove printer completely"
-                                >
-                                  <Trash2 className="w-3 h-3" />
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                /* GRID VIEW */
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {displayList.map((prt: any, idx: number) => {
-                    const prtId = prt.id || `os-${idx}`;
-                    const isDef = prt.isDefault || prtId === defaultPrinterId;
-                    const isBt = prt.connectionType === 'BLUETOOTH';
-                    const isKnown = savedPrinters.some(sp => sp.name.toLowerCase() === prt.name.toLowerCase());
-
-                    return (
-                      <div key={prtId} className={`p-3 rounded-xl border text-xs transition-all ${isDef ? 'bg-blue-50/40 border-blue-300' : 'bg-white border-slate-200'}`}>
-                        <div className="flex items-center justify-between mb-2">
-                          <span className={`inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wide ${isBt ? 'text-blue-600' : 'text-slate-500'}`}>
-                            <span className={`w-1.5 h-1.5 rounded-full ${isBt ? 'bg-blue-500' : 'bg-slate-400'}`}></span>
-                            {prt.connectionType}
-                          </span>
-                          {isDef && (
-                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-black bg-blue-600 text-white">
-                              <Star className="w-2 h-2 fill-white" /> Default
-                            </span>
-                          )}
-                        </div>
-                        <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-white mb-2">
-                          <Printer className="w-5 h-5" />
-                        </div>
-                        <p className="font-extrabold text-slate-900 truncate">{prt.name}</p>
-                        <p className="text-[10px] text-slate-500 font-medium mt-0.5">
-                          {prt.printerType === 'LABEL' ? '50x50mm Label (TSPL)' : '58mm Receipt (ESC/POS)'} • <span className="font-mono">{prt.portName}</span>
-                        </p>
-
-                        <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between">
-                          {!isKnown ? (
-                            <button onClick={() => handleSaveActivePrinter(prt.name)} className="px-2 py-1 rounded bg-teal-50 hover:bg-teal-600 text-teal-700 hover:text-white border border-teal-200 text-[10px] font-bold transition-all">
-                              Save
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => handleRowTestPrint(prt)}
-                              disabled={rowTestPrintingId === prtId}
-                              className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 text-[10px] font-bold transition-all"
-                            >
-                              {rowTestPrintingId === prtId ? 'Printing…' : 'Test Print'}
-                            </button>
-                          )}
-                          <div className="flex items-center gap-1">
-                            {isKnown && !isDef && (
-                              <button onClick={() => handleSetDefaultPrinter(prtId)} className="px-2 py-1 rounded bg-blue-50 hover:bg-blue-600 text-blue-700 hover:text-white text-[10px] font-bold transition-all">
-                                Set Default
-                              </button>
-                            )}
-                            <button
-                              onClick={() => setRemoveModalState({ isOpen: true, id: prtId, name: prt.name, isDefault: isDef, connectionType: prt.connectionType, rawDeviceId: prt.macAddress || prtId.replace('seznik-bt-', '') })}
-                              className="p-1.5 rounded bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white transition-all"
-                              title="Remove printer completely"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )
-            ) : (
-              /* Honest Empty State (Zero Mock Data) */
-              <div className="p-6 text-center border border-dashed border-slate-300 rounded-lg bg-slate-50 space-y-2">
-                <div className="w-10 h-10 rounded-full bg-slate-200 text-slate-500 flex items-center justify-center mx-auto">
-                  <Printer className="w-5 h-5" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-extrabold text-slate-800">No printers configured yet.</h4>
-                  <p className="text-[11px] text-slate-500 font-medium mt-0.5">
-                    Connect a USB thermal printer cable to your PC, or pair one over Bluetooth above. Detected printers appear here automatically.
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Right Column (5 cols): Physically Accurate Previews based on Matched Profile */}
-        <div className="lg:col-span-5 space-y-3">
-          <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-sm space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-              <h3 className="text-xs font-black uppercase text-slate-900 tracking-wider">
-                {v1State.brand === 'JOSH' ? 'JOSH 50x50mm Label Preview' : v1State.brand === 'VEER' ? 'VEER 58mm Receipt Preview' : v1State.brand === 'DEV' ? 'DEV Combo (Label + Receipt) Preview' : 'No Printer Selected'}
-              </h3>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">
-                {v1State.brand === 'JOSH' ? '50x50mm TSPL' : v1State.brand === 'VEER' ? '58mm ESC/POS' : v1State.brand === 'DEV' ? 'Dual Mode' : 'USB Standby'}
-              </span>
-            </div>
-
-            {/* PREVIEWS CONTAINER */}
-            <div className="flex justify-center p-4 bg-slate-100 rounded-lg border border-slate-200 min-h-[240px] items-center">
-              {v1State.brand === 'JOSH' ? (
-                /* Physically Proportional JOSH 50mm x 50mm Barcode Label Preview */
-                <div className="w-[190px] h-[190px] bg-white border-2 border-slate-400 shadow-lg rounded p-3 flex flex-col justify-between select-none aspect-square shrink-0 font-sans text-slate-900">
-                  <div className="flex justify-between items-start w-full">
-                    <div className="text-[10px] font-mono leading-tight">
-                      <div className="text-slate-600 font-medium">4338-9856-82-M</div>
-                      <div className="font-extrabold text-slate-900 text-[11px]">08MT1-08Y-TRYU</div>
-                    </div>
-                    <div className="text-[9px] font-bold text-slate-700">
-                      Lot #: 19/05/2023
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col items-center w-full mt-2">
-                    <div className="flex items-end justify-between h-12 w-full px-1">
-                      <div className="w-1.5 h-full bg-slate-900"></div>
-                      <div className="w-0.5 h-full bg-slate-900"></div>
-                      <div className="w-2 h-full bg-slate-900"></div>
-                      <div className="w-0.5 h-full bg-slate-900"></div>
-                      <div className="w-1 h-full bg-slate-900"></div>
-                      <div className="w-0.5 h-full bg-slate-900"></div>
-                      <div className="w-2.5 h-full bg-slate-900"></div>
-                      <div className="w-0.5 h-full bg-slate-900"></div>
-                      <div className="w-1.5 h-full bg-slate-900"></div>
-                      <div className="w-0.5 h-full bg-slate-900"></div>
-                      <div className="w-2 h-full bg-slate-900"></div>
-                      <div className="w-0.5 h-full bg-slate-900"></div>
-                      <div className="w-1 h-full bg-slate-900"></div>
-                      <div className="w-1.5 h-full bg-slate-900"></div>
-                      <div className="w-0.5 h-full bg-slate-900"></div>
-                      <div className="w-2 h-full bg-slate-900"></div>
-                      <div className="w-0.5 h-full bg-slate-900"></div>
-                      <div className="w-1.5 h-full bg-slate-900"></div>
-                      <div className="w-1 h-full bg-slate-900"></div>
-                    </div>
-                    <span className="text-[10px] font-mono font-black text-slate-900 tracking-widest mt-1">3 5 6 8 4 4 8 7 9 3 2 - A - K - R</span>
-                  </div>
-                </div>
-              ) : v1State.brand === 'VEER' ? (
-                /* Physically Proportional VEER 58mm Thermal Receipt Preview */
-                <div className="w-[200px] bg-white border border-slate-300 shadow-md p-3 font-mono text-[10px] text-slate-800 space-y-2 select-none shrink-0 relative">
-                  <div className="text-center font-bold border-b border-slate-300 pb-1">
-                    <div>SEZNIK POS STORE</div>
-                    <div className="text-[8px] font-normal text-slate-500">58mm Thermal Receipt</div>
-                  </div>
-
-                  <div className="text-[9px] space-y-0.5 border-b border-slate-200 pb-1">
-                    <div className="flex justify-between">
-                      <span>Status:</span>
-                      <span className="font-bold text-emerald-700">REAL VERIFIED</span>
-                    </div>
-                    <div>Date: {new Date().toLocaleDateString()}</div>
-                  </div>
-
-                  <div className="text-[9px] space-y-1">
-                    <div className="flex justify-between font-bold text-slate-900">
-                      <span>VEER Automated Test</span>
-                      <span>₹0.00</span>
-                    </div>
-                  </div>
-
-                  <div className="text-center text-[8px] text-slate-500 pt-1 border-t border-slate-200">
-                    Thank you for using SEZNIK!
-                  </div>
-                </div>
-              ) : v1State.brand === 'DEV' ? (
-                /* DEV Combo Preview */
-                <div className="space-y-2 text-center">
-                  <div className="p-3 bg-white border border-slate-300 rounded-lg shadow-xs text-xs font-bold text-slate-800">
-                    DEV Profile Active: 50x50mm Label + 58mm Receipt Dual Printing Supported
-                  </div>
-                </div>
-              ) : (
-                <div className="text-xs text-slate-400 font-medium italic">
-                  No USB printer detected. Connect USB cable to generate live physical preview.
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
       </div>
 
-      {/* Confirmation Modal for Printer Removal */}
+      {/* ALL CONFIGURED PRINTERS LIST */}
+      <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs space-y-4 transition-colors">
+        <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+          <div className="flex items-center gap-2.5">
+            <Printer className="w-5 h-5 text-blue-600 dark:text-sky-400" />
+            <h3 className="text-sm md:text-base font-black text-slate-900 dark:text-white">
+              {t.dashboard.allConfiguredPrinters}
+            </h3>
+          </div>
+
+          <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold">
+            {savedPrinters.length || osPrinters.length} {t.dashboard.activePrinters}
+          </span>
+        </div>
+
+        {/* PRINTERS LIST */}
+        {savedPrinters.length > 0 || osPrinters.length > 0 ? (
+          <div className="grid grid-cols-1 gap-2.5">
+            {(savedPrinters.length > 0 ? savedPrinters : osPrinters).map((prt: any) => {
+              const prtId = prt.id || prt.name;
+              const isDefault = prt.isDefault || defaultPrinterId === prtId;
+
+              return (
+                <div
+                  key={prtId}
+                  className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 flex items-center justify-center font-bold text-sm shadow-xs">
+                      <Printer className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-sm font-black text-slate-900 dark:text-white">{prt.name}</h4>
+                        {isDefault && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-emerald-100 dark:bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-500/30 flex items-center gap-1">
+                            <Check className="w-3 h-3 stroke-[3]" /> {t.dashboard.defaultBadge}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                        {t.dashboard.portInterface}: {prt.portName || 'USB001'} | {t.dashboard.status}: {t.dashboard.ready}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* ACTION CONTROLS */}
+                  <div className="flex items-center gap-2 self-end sm:self-center">
+                    <button
+                      onClick={handleRunTestPrint}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      <span>{t.dashboard.testPrint}</span>
+                    </button>
+
+                    {!isDefault && (
+                      <button
+                        onClick={() => setSavedDefaultPrinter(prtId)}
+                        className="px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-blue-600 hover:text-white text-slate-800 dark:text-slate-200 font-bold text-xs transition-all cursor-pointer"
+                      >
+                        {t.dashboard.setDefault}
+                      </button>
+                    )}
+
+                    <button
+                      onClick={() =>
+                        setRemoveModalState({
+                          isOpen: true,
+                          id: prtId,
+                          name: prt.name,
+                          isDefault,
+                          connectionType: prt.connectionType || 'USB',
+                          rawDeviceId: prt.macAddress || prtId,
+                        })
+                      }
+                      className="p-1.5 rounded-lg bg-rose-100 dark:bg-rose-900/30 hover:bg-rose-600 text-rose-700 hover:text-white transition-all cursor-pointer"
+                      title="Remove printer"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="p-8 text-center border border-dashed border-slate-200 dark:border-slate-800 rounded-xl bg-slate-50 dark:bg-slate-800/30 space-y-2">
+            <div className="w-10 h-10 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400 flex items-center justify-center mx-auto">
+              <Printer className="w-5 h-5" />
+            </div>
+            <h4 className="text-sm font-black text-slate-800 dark:text-white">{t.dashboard.noPrintersConfigured}</h4>
+            <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
+              {t.dashboard.noPrintersDesc}
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* FOOTER SHORTCUT REMINDER */}
+      <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-500/30 flex items-center justify-between text-xs text-blue-800 dark:text-sky-300 font-bold">
+        <div className="flex items-center gap-2">
+          <Info className="w-4 h-4 text-blue-600 dark:text-sky-400 shrink-0" />
+          <span>{t.guide.ctrlPNote}</span>
+        </div>
+        <button
+          onClick={() => navigate('/guide')}
+          className="text-xs underline font-extrabold hover:text-blue-600 cursor-pointer shrink-0"
+        >
+          {t.guide.title}
+        </button>
+      </div>
+
+      {/* MODALS */}
       <RemovePrinterModal
         isOpen={removeModalState.isOpen}
         printerName={removeModalState.name}
@@ -896,7 +469,6 @@ export const Dashboard: React.FC = () => {
         onConfirm={handleConfirmRemove}
       />
 
-      {/* Bluetooth Pairing Modal */}
       <ConnectBluetoothModal
         isOpen={isBluetoothModalOpen}
         onClose={() => setIsBluetoothModalOpen(false)}
@@ -904,3 +476,5 @@ export const Dashboard: React.FC = () => {
     </div>
   );
 };
+
+export default Dashboard;

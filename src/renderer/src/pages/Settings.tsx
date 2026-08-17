@@ -1,13 +1,16 @@
 import React, { useEffect, useState } from 'react';
-import { Settings as SettingsIcon, Moon, Globe, HardDrive, Bell, Bluetooth, RefreshCw, CheckCircle2, Unlink, Trash2, AlertTriangle, Loader2 } from 'lucide-react';
+import { Settings as SettingsIcon, Moon, Globe, HardDrive, Bell, Bluetooth, RefreshCw, CheckCircle2, Unlink, Trash2, AlertTriangle, Loader2, Languages } from 'lucide-react';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { usePrinterStore } from '../store/usePrinterStore';
+import { useTranslation } from '../locales/useTranslation';
 import { ConnectBluetoothModal } from '../components/ConnectBluetoothModal';
+import { LanguageSelector } from '../components/LanguageSelector';
 
 export const Settings: React.FC = () => {
   const { settings, updateSettings } = useSettingsStore();
   const { isDark, toggleTheme } = useThemeStore();
+  const { t, language, setLanguage } = useTranslation();
   const {
     bluetoothState,
     savedPrinters,
@@ -36,8 +39,8 @@ export const Settings: React.FC = () => {
   return (
     <div className="space-y-4 max-w-6xl mx-auto select-none text-slate-800">
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-        <h1 className="text-sm font-black uppercase text-slate-900 tracking-wider">Application Settings & Configuration</h1>
-        <p className="text-xs text-slate-500 font-medium">Configure printer profiles, media dimensions, startup behavior, and logs</p>
+        <h1 className="text-sm font-black uppercase text-slate-900 tracking-wider">{t.settings.title}</h1>
+        <p className="text-xs text-slate-500 font-medium">{t.settings.subtitle}</p>
       </div>
 
       <div className="space-y-3">
@@ -45,7 +48,7 @@ export const Settings: React.FC = () => {
         <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-sm space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-xs font-black uppercase text-slate-900 tracking-wider flex items-center gap-2">
-              <Bluetooth className="w-4 h-4 text-blue-600" /> Bluetooth Printer
+              <Bluetooth className="w-4 h-4 text-blue-600" /> {t.settings.bluetooth.title}
             </h2>
             <button
               onClick={() => scanBluetoothDevices()}
@@ -53,7 +56,7 @@ export const Settings: React.FC = () => {
               className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all border border-slate-200"
             >
               <RefreshCw className={`w-3 h-3 text-blue-600 ${bluetoothState.isScanning ? 'animate-spin' : ''}`} />
-              <span>Rescan Paired Devices</span>
+              <span>{t.settings.bluetooth.rescan}</span>
             </button>
           </div>
 
@@ -64,11 +67,11 @@ export const Settings: React.FC = () => {
                 <div>
                   <p className="font-extrabold text-slate-900">{bluetoothState.connectedQueueName}</p>
                   <p className="text-[11px] text-slate-500 font-medium">
-                    On <span className="font-mono">{bluetoothState.connectedComPort}</span> — installed in Windows, visible in any app's Print dialog (Ctrl+P)
-                    {bluetoothState.testPrintSuccess ? ' — test receipt verified ✓' : ''}
+                    {t.settings.bluetooth.installedInWindows.replace('{port}', bluetoothState.connectedComPort || 'COM')}
+                    {bluetoothState.testPrintSuccess ? t.settings.bluetooth.verifiedTest : ''}
                   </p>
                   <p className="text-[10px] text-slate-400 font-medium mt-0.5">
-                    Windows' Bluetooth & devices page may still say "Not connected" for it — that's normal for this type of printer, not a fault.
+                    {t.settings.bluetooth.normalNotice}
                   </p>
                 </div>
               </div>
@@ -78,25 +81,25 @@ export const Settings: React.FC = () => {
                 className="px-2.5 py-1 rounded-lg bg-white hover:bg-rose-600 hover:text-white text-rose-700 text-[11px] font-bold border border-rose-200 transition-all flex items-center gap-1"
               >
                 <Unlink className="w-3 h-3" />
-                <span>Deselect</span>
+                <span>{t.settings.bluetooth.deselect}</span>
               </button>
             </div>
           ) : (
             <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-600 font-medium flex items-center justify-between">
-              <span>No Bluetooth printer connected.</span>
+              <span>{t.settings.bluetooth.noBtConnected}</span>
               <button
                 onClick={() => setIsBluetoothModalOpen(true)}
                 className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold flex items-center gap-1.5 transition-all"
               >
                 <Bluetooth className="w-3.5 h-3.5" />
-                <span>Connect via Bluetooth</span>
+                <span>{t.settings.bluetooth.connectViaBt}</span>
               </button>
             </div>
           )}
 
           {bluetoothPrinters.length > 0 && (
             <div className="space-y-1.5 pt-1">
-              <span className="text-[10px] font-extrabold text-slate-400 uppercase">Windows Printers Installed via Bluetooth</span>
+              <span className="text-[10px] font-extrabold text-slate-400 uppercase">{t.settings.bluetooth.installedPrintersTitle}</span>
               {bluetoothPrinters.map((p) => (
                 <div key={p.id} className="p-2.5 rounded-lg border border-slate-200 flex items-center justify-between text-xs">
                   <div>
@@ -107,11 +110,11 @@ export const Settings: React.FC = () => {
                     <button
                       onClick={() => handleCheck(p.portName)}
                       disabled={checkingPort !== null}
-                      title="Briefly test whether the printer actually responds right now — works even if you haven't connected it in SEZNIK this session"
+                      title="Briefly test whether the printer actually responds right now"
                       className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 text-[10px] font-bold transition-all border border-slate-200 flex items-center gap-1"
                     >
                       {checkingPort === p.portName ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Bluetooth className="w-2.5 h-2.5 text-blue-600" />}
-                      <span>Check</span>
+                      <span>{t.settings.bluetooth.check}</span>
                     </button>
                     {bluetoothState.connectedQueueName !== p.name && (
                       <button
@@ -121,7 +124,7 @@ export const Settings: React.FC = () => {
                         )}
                         className="px-2.5 py-1 rounded bg-slate-100 hover:bg-blue-600 hover:text-white text-slate-700 text-[10px] font-bold transition-all border border-slate-200"
                       >
-                        Reconnect
+                        {t.settings.bluetooth.reconnect}
                       </button>
                     )}
                     <button
@@ -130,7 +133,7 @@ export const Settings: React.FC = () => {
                       className="px-2 py-1 rounded bg-rose-50 hover:bg-rose-600 hover:text-white text-rose-700 text-[10px] font-bold transition-all border border-rose-200 flex items-center gap-1"
                     >
                       <Trash2 className="w-2.5 h-2.5" />
-                      <span>Forget</span>
+                      <span>{t.settings.bluetooth.forget}</span>
                     </button>
                   </div>
                 </div>
@@ -151,16 +154,16 @@ export const Settings: React.FC = () => {
         {/* Media Profile Configurations */}
         <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-sm space-y-3">
           <h2 className="text-xs font-black uppercase text-slate-900 tracking-wider flex items-center gap-2">
-            <HardDrive className="w-4 h-4 text-blue-600" /> Media Profiles & Specifications
+            <HardDrive className="w-4 h-4 text-blue-600" /> {t.settings.media.title}
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
             <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-1">
-              <span className="font-extrabold text-blue-700">JOSH Label Profile</span>
-              <p className="text-slate-500 font-medium">Printable Width: 50mm | Height: 50mm | Protocol: TSPL 203 DPI</p>
+              <span className="font-extrabold text-blue-700">{t.settings.media.joshProfile}</span>
+              <p className="text-slate-500 font-medium">{t.settings.media.joshDesc}</p>
             </div>
             <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-1">
-              <span className="font-extrabold text-emerald-700">VEER Receipt Profile</span>
-              <p className="text-slate-500 font-medium">Printable Width: 58mm | Continuous Roll | Protocol: ESC/POS 203 DPI</p>
+              <span className="font-extrabold text-emerald-700">{t.settings.media.veerProfile}</span>
+              <p className="text-slate-500 font-medium">{t.settings.media.veerDesc}</p>
             </div>
           </div>
         </div>
@@ -168,12 +171,25 @@ export const Settings: React.FC = () => {
         {/* Startup & Application Settings */}
         <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-sm space-y-3">
           <h2 className="text-xs font-black uppercase text-slate-900 tracking-wider flex items-center gap-2">
-            <Bell className="w-4 h-4 text-purple-600" /> Desktop Application Behavior
+            <Bell className="w-4 h-4 text-purple-600" /> {t.settings.appBehavior.title}
           </h2>
+
+          {/* Language Selection */}
+          <div className="py-2 border-b border-slate-100 space-y-2">
+            <div>
+              <p className="font-bold text-slate-800 flex items-center gap-1.5">
+                <Languages className="w-3.5 h-3.5 text-blue-600" />
+                <span>{t.settings.appBehavior.language}</span>
+              </p>
+              <p className="text-slate-500 text-[11px]">{t.settings.appBehavior.languageDesc}</p>
+            </div>
+            <LanguageSelector variant="settings" />
+          </div>
+
           <div className="flex items-center justify-between text-xs py-1 border-b border-slate-100">
             <div>
-              <p className="font-bold text-slate-800">Auto Updater</p>
-              <p className="text-slate-500 text-[11px]">Automatically check and apply application background releases</p>
+              <p className="font-bold text-slate-800">{t.settings.appBehavior.autoUpdater}</p>
+              <p className="text-slate-500 text-[11px]">{t.settings.appBehavior.autoUpdaterDesc}</p>
             </div>
             <input
               type="checkbox"
@@ -185,14 +201,14 @@ export const Settings: React.FC = () => {
 
           <div className="flex items-center justify-between text-xs py-1">
             <div>
-              <p className="font-bold text-slate-800">Theme Mode</p>
-              <p className="text-slate-500 text-[11px]">Toggle application accent interface</p>
+              <p className="font-bold text-slate-800">{t.settings.appBehavior.themeMode}</p>
+              <p className="text-slate-500 text-[11px]">{t.settings.appBehavior.themeModeDesc}</p>
             </div>
             <button
               onClick={toggleTheme}
               className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg font-bold text-xs border border-slate-300"
             >
-              {isDark ? 'Dark Mode' : 'Light Mode'}
+              {isDark ? t.settings.appBehavior.darkMode : t.settings.appBehavior.lightMode}
             </button>
           </div>
         </div>
@@ -200,7 +216,7 @@ export const Settings: React.FC = () => {
         {/* Cache Path */}
         <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-sm space-y-2">
           <h2 className="text-xs font-black uppercase text-slate-900 tracking-wider flex items-center gap-2">
-            <HardDrive className="w-4 h-4 text-slate-600" /> Cache & Download Path
+            <HardDrive className="w-4 h-4 text-slate-600" /> {t.settings.cache.title}
           </h2>
           <input
             type="text"

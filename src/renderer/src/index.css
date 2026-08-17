@@ -48,3 +48,18 @@
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(148, 163, 184, 0.8);
 }
+
+/* MagicUI Concentric Ripple Animation */
+@keyframes ripple {
+  0%,
+  100% {
+    transform: translate(-50%, -50%) scale(1);
+  }
+  50% {
+    transform: translate(-50%, -50%) scale(0.92);
+  }
+}
+
+.animate-ripple {
+  animation: ripple var(--duration, 2.2s) ease calc(var(--i, 0) * 0.18s) infinite;
+}
