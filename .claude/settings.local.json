@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node_modules/.bin/tsc --noEmit -p tsconfig.node.json)",
+      "Bash(node_modules/.bin/tsc --noEmit -p tsconfig.json)",
+      "Bash(npm run *)",
+      "Bash(node_modules/.bin/tsc -p tsconfig.node.json)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(rm -f \"dist/main/services/PrinterPersistenceService.js\" \"dist/main/services/PrinterPersistenceService.d.ts\")",
+      "Bash(rm -rf dist)"
+    ]
+  }
+}
