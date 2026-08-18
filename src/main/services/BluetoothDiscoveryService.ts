@@ -103,20 +103,32 @@ export class BluetoothDiscoveryService {
    * Lists Windows "Ports" class devices that are Bluetooth Serial Port
    * Profile bindings — these are the actual COM ports we can write raw
    * ESC/POS bytes to (e.g. "Standard Serial over Bluetooth link (COM5)").
+   *
+   * Broadened filter: any Ports-class device whose InstanceId starts with
+   * BTHENUM is a Bluetooth SPP port regardless of what its FriendlyName says.
    */
   private async scanBluetoothComPorts(): Promise<RawPnpEntry[]> {
-    const psCmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-PnpDevice -Class Ports -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.FriendlyName -like '*Bluetooth*' -or $_.InstanceId -like 'BTHENUM*' } | Select-Object FriendlyName, InstanceId, Status | ConvertTo-Json"`;
+    // Fetch ALL Ports-class devices — we filter in JS to catch every variant.
+    const psCmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-PnpDevice -Class Ports -PresentOnly -ErrorAction SilentlyContinue | Select-Object FriendlyName, InstanceId, Status | ConvertTo-Json"`;
 
     try {
       const { stdout } = await execPromise(psCmd, { maxBuffer: 10 * 1024 * 1024 });
       if (!stdout || stdout.trim() === '') return [];
       const parsed = JSON.parse(stdout);
-      return Array.isArray(parsed) ? parsed : [parsed];
+      const all: RawPnpEntry[] = Array.isArray(parsed) ? parsed : [parsed];
+      // Keep only Bluetooth SPP entries: InstanceId starts with BTHENUM,
+      // or FriendlyName contains "Bluetooth" (covers renamed/localised drivers).
+      return all.filter(p => {
+        const id = (p.InstanceId || '').toUpperCase();
+        const name = (p.FriendlyName || '').toLowerCase();
+        return id.startsWith('BTHENUM') || name.includes('bluetooth');
+      });
     } catch (err: any) {
       logger.warn(`[BluetoothDiscoveryService] Bluetooth COM port scan notice: ${err.message}`);
       return [];
     }
   }
+
 
   /**
    * Returns every paired Bluetooth device, with its bound SPP COM port

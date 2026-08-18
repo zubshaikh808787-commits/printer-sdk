@@ -2,26 +2,15 @@ import React, { useEffect, useState } from 'react';
 import {
   Printer,
   CheckCircle2,
-  AlertCircle,
-  Sparkles,
   RefreshCw,
   Usb,
   Bluetooth,
   FileText,
   Trash2,
-  HardDriveDownload,
-  PlusCircle,
-  Star,
-  Settings as SettingsIcon,
-  HelpCircle,
-  Sliders,
-  ExternalLink,
-  ChevronRight,
   Info,
   Check,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useNavigate } from 'react-router-dom';
 import { usePrinterStore } from '../store/usePrinterStore';
 import { RemovePrinterModal } from '../components/RemovePrinterModal';
 import { ConnectBluetoothModal } from '../components/ConnectBluetoothModal';
@@ -32,7 +21,6 @@ import { useTheme } from '../context/ThemeContext';
 export const Dashboard: React.FC = () => {
   const { t } = useTranslation();
   const { isDark } = useTheme();
-  const navigate = useNavigate();
 
   const {
     v1State,
@@ -41,13 +29,10 @@ export const Dashboard: React.FC = () => {
     defaultPrinterId,
     initV1Orchestrator,
     startV1Pipeline,
-    resetAndScanV1,
     triggerV1TestPrint,
     fetchOsPrinters,
     fetchSavedPrinters,
-    savePrinter,
     setSavedDefaultPrinter,
-    calibratePrinter,
     isScanning,
     bluetoothState,
     initBluetooth,
@@ -226,23 +211,28 @@ export const Dashboard: React.FC = () => {
           </div>
         </button>
 
-        {/* ACTION 4: SETUP GUIDE & HELP */}
+        {/* ACTION 4: REFRESH ALL */}
         <button
-          onClick={() => navigate('/guide')}
+          onClick={async () => {
+            await fetchOsPrinters();
+            await fetchSavedPrinters();
+            setStatusMessage('Refreshed printer list ✓');
+            setTimeout(() => setStatusMessage(null), 2500);
+          }}
           className="p-5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white shadow-md transition-all flex flex-col justify-between gap-3 text-left cursor-pointer border border-slate-700 group"
         >
           <div className="flex items-center justify-between">
             <div className="w-10 h-10 rounded-xl bg-slate-700 flex items-center justify-center">
-              <HelpCircle className="w-5 h-5 text-sky-400" />
+              <RefreshCw className="w-5 h-5 text-sky-400" />
             </div>
             <span className="text-[11px] font-extrabold uppercase bg-slate-700 px-2 py-0.5 rounded-full text-slate-300">
               {t.nav.system}
             </span>
           </div>
           <div>
-            <h3 className="text-base font-black tracking-tight">{t.guide.title}</h3>
+            <h3 className="text-base font-black tracking-tight">Refresh</h3>
             <p className="text-xs text-slate-400 font-medium mt-0.5">
-              {t.guide.subtitle}
+              Reload all printer status
             </p>
           </div>
         </button>
@@ -447,17 +437,9 @@ export const Dashboard: React.FC = () => {
       </div>
 
       {/* FOOTER SHORTCUT REMINDER */}
-      <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-500/30 flex items-center justify-between text-xs text-blue-800 dark:text-sky-300 font-bold">
-        <div className="flex items-center gap-2">
-          <Info className="w-4 h-4 text-blue-600 dark:text-sky-400 shrink-0" />
-          <span>{t.guide.ctrlPNote}</span>
-        </div>
-        <button
-          onClick={() => navigate('/guide')}
-          className="text-xs underline font-extrabold hover:text-blue-600 cursor-pointer shrink-0"
-        >
-          {t.guide.title}
-        </button>
+      <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-500/30 flex items-center gap-2 text-xs text-blue-800 dark:text-sky-300 font-bold">
+        <Info className="w-4 h-4 text-blue-600 dark:text-sky-400 shrink-0" />
+        <span>{t.guide.ctrlPNote}</span>
       </div>
 
       {/* MODALS */}
