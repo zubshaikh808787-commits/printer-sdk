@@ -214,10 +214,11 @@ export class BluetoothPrinterService {
         driverName: registerResult.driverUsed,
         portName: device.comPort,
         connectionType: 'BLUETOOTH',
-        isDefault: false,
+        isDefault: true,
         printerType: printerTypeForBrand(resolvedBrand),
         macAddress: device.address,
       });
+      await this.appConfig.setSavedDefaultPrinter(savedId);
     } catch (persistErr: any) {
       logger.warn(`[BluetoothPrinterService] Failed to persist Bluetooth printer: ${persistErr.message}`);
     }

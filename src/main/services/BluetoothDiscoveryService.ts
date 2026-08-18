@@ -12,14 +12,17 @@ const execPromise = util.promisify(exec);
 // generic (e.g. "MPT-II"), so this is a best-effort guess the user can
 // still override in the Connect via Bluetooth picker.
 const JOSH_KEYWORDS = ['josh', 'dp27', 'ld0801', 'detong', 'dtpweb', 'tspl', 'sticker', 'label', 'dothantech'];
-const VEER_KEYWORDS = ['veer', 'pos58', 'pos-58', 'pos 58', '58mm', 'receipt', 'olivetti', 'prt80', 'xprinter', 'zjiang', 'gprinter'];
+const VEER_KEYWORDS = [
+  'veer', 'pos58', 'pos-58', 'pos 58', '58mm', 'receipt', 'olivetti', 'prt80', 'xprinter',
+  'zjiang', 'gprinter', 'mpt', 'mtp', 'rpp', 'pt-', 'pt2', 'zj-', 'zj', '58hb', 'innerprinter',
+  'sp-pos', 'pos', 'thermal'
+];
 const DEV_KEYWORDS = ['sz-80d', 'pos80', 'pos-80', 'dev-58', 'dev-80'];
 
-// Any of these means "this is plausibly some kind of printer" even when we
-// can't tell JOSH from VEER from the name alone.
+// Any of these means "this is plausibly some kind of printer"
 const GENERIC_PRINTER_KEYWORDS = [
   'printer', 'print', 'pos', 'thermal', 'esc/pos', 'escpos', 'bt-', 'spp',
-  'mtp', 'mpt', 'goojprt', 'rpp',
+  'mtp', 'mpt', 'goojprt', 'rpp', 'zj', 'pt', '58', 'receipt',
 ];
 
 // Devices that are never printers — filtered out so the picker isn't cluttered
