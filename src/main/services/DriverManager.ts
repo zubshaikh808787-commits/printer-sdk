@@ -287,65 +287,59 @@ export class DriverManager {
   }
 
   /**
-   * Discovers the currently active USB printer port by scanning Windows Printer Ports
-   * and correlating with any live USB device handles. Returns the best port name.
-   * This fixes the "Printing, Error" issue where the queue was bound to a stale port.
+   * Discovers the currently active USB printer port by scanning Windows PnP
+   * USBPRINT devices that are physically present and active right now.
+   * Returns the exact live port (e.g. USB003).
    */
-  private async discoverActiveUsbPort(): Promise<string> {
+  async discoverActiveUsbPort(): Promise<string> {
     const DEFAULT_PORT = 'USB001';
+    if (os.platform() !== 'win32') return DEFAULT_PORT;
+
     try {
-      // First try: read the port from the existing POS58 Printer queue
-      try {
-        const { stdout: currentPortOut } = await execPromise(
-          `powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-Printer -Name 'POS58 Printer' -ErrorAction SilentlyContinue).PortName"`
-        );
-        if (currentPortOut && currentPortOut.trim() && currentPortOut.trim() !== 'USB001') {
-          logger.info(`[DriverManager] POS58 Printer current port: ${currentPortOut.trim()}`);
+      // 1. Check physically present USBPRINT PnP devices (highest accuracy)
+      const psPnp = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -like 'USBPRINT*' -and $_.Status -eq 'OK' } | Select-Object InstanceId, FriendlyName | ConvertTo-Json"`;
+      const { stdout: pnpOut } = await execPromise(psPnp);
+      if (pnpOut && pnpOut.trim() !== '') {
+        const parsed = JSON.parse(pnpOut);
+        const list: any[] = Array.isArray(parsed) ? parsed : [parsed];
+        for (const item of list) {
+          const match = String(item.InstanceId || '').match(/&(USB\d+)/i);
+          if (match && match[1]) {
+            const port = match[1].toUpperCase();
+            logger.info(`[DriverManager] Found physically active USB port from PnP InstanceId: "${port}" (${item.FriendlyName})`);
+            return port;
+          }
         }
-      } catch (e) {}
-
-      // Second: enumerate ALL USB ports and pick the most recently added one
-      // (Windows assigns ascending port numbers, so highest USB00N = most recent device)
-      const psGetPorts = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-PrinterPort -ErrorAction SilentlyContinue | Select-Object Name, Description | ConvertTo-Json"`;
-      const { stdout } = await execPromise(psGetPorts);
-      if (!stdout || stdout.trim() === '') return DEFAULT_PORT;
-
-      const parsed = JSON.parse(stdout);
-      const portList: any[] = Array.isArray(parsed) ? parsed : [parsed];
-
-      // Prefer ports whose description matches VEER/POS58/Olivetti
-      const specificPorts = portList.filter((p: any) => {
-        const desc = String(p.Description || '').toLowerCase();
-        const name = String(p.Name || '').toLowerCase();
-        return desc.includes('olivetti') || desc.includes('prt80') || desc.includes('pos58') ||
-               desc.includes('veer') || desc.includes('58') || name.includes('pos58');
-      });
-
-      if (specificPorts.length > 0) {
-        specificPorts.sort((a: any, b: any) => {
-          const numA = parseInt(String(a.Name || '').replace(/\D/g, '') || '0', 10);
-          const numB = parseInt(String(b.Name || '').replace(/\D/g, '') || '0', 10);
-          return numB - numA;
-        });
-        return specificPorts[0].Name;
       }
 
-      // Fallback: any USB port, highest number first (most recently connected)
-      const genericUsbPorts = portList.filter((p: any) => {
-        const name = String(p.Name || '').toUpperCase();
-        return (name.startsWith('USB') || name.startsWith('CP')) &&
-               !String(p.Description || '').toLowerCase().includes('dp27') &&
-               !String(p.Description || '').toLowerCase().includes('detong');
-      });
+      // 2. Query printer ports from Windows Spooler matching Olivetti / POS58 / VEER
+      const psGetPorts = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-PrinterPort -ErrorAction SilentlyContinue | Select-Object Name, Description | ConvertTo-Json"`;
+      const { stdout } = await execPromise(psGetPorts);
+      if (stdout && stdout.trim() !== '') {
+        const parsed = JSON.parse(stdout);
+        const portList: any[] = Array.isArray(parsed) ? parsed : [parsed];
 
-      if (genericUsbPorts.length > 0) {
-        genericUsbPorts.sort((a: any, b: any) => {
-          const numA = parseInt(String(a.Name || '').replace(/\D/g, '') || '0', 10);
-          const numB = parseInt(String(b.Name || '').replace(/\D/g, '') || '0', 10);
-          return numB - numA;
+        const specificPorts = portList.filter((p: any) => {
+          const desc = String(p.Description || '').toLowerCase();
+          const name = String(p.Name || '').toLowerCase();
+          return desc.includes('olivetti') || desc.includes('prt80') || desc.includes('pos58') ||
+                 desc.includes('veer') || desc.includes('58') || name.includes('pos58');
         });
-        logger.info(`[DriverManager] Using USB port: ${genericUsbPorts[0].Name}`);
-        return genericUsbPorts[0].Name;
+
+        if (specificPorts.length > 0) {
+          return specificPorts[0].Name;
+        }
+
+        const genericUsbPorts = portList.filter((p: any) => {
+          const name = String(p.Name || '').toUpperCase();
+          return name.startsWith('USB') &&
+                 !String(p.Description || '').toLowerCase().includes('dp27') &&
+                 !String(p.Description || '').toLowerCase().includes('detong');
+        });
+
+        if (genericUsbPorts.length > 0) {
+          return genericUsbPorts[0].Name;
+        }
       }
     } catch (ePort: any) {
       logger.warn(`[DriverManager] Port discovery notice: ${ePort.message}`);
