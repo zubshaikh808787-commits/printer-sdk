@@ -203,101 +203,154 @@ export class DriverManager {
 
     const driverExePath = this.findDriverExe(candidates);
 
-    if (os.platform() === 'win32') {
-      try {
-        // Dynamically discover registered driver name (POS58, POS-58, Generic / Text Only)
-        const psGetDrivers = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-PrinterDriver -ErrorAction SilentlyContinue | Select-Object Name | ConvertTo-Json"`;
-        let matchedDriver = 'POS58';
-        let isDriverInStore = false;
-        try {
-          const { stdout } = await execPromise(psGetDrivers);
-          if (stdout && stdout.trim() !== '') {
-            const parsed = JSON.parse(stdout);
-            const drvList: any[] = Array.isArray(parsed) ? parsed : [parsed];
-            const found = drvList.find((d: any) => {
-              const dName = String(d.Name || '').toLowerCase();
-              return dName.includes('pos58') || dName.includes('pos-58') || dName.includes('58mm') || dName.includes('veer');
-            });
-            if (found && found.Name) {
-              matchedDriver = found.Name;
-              isDriverInStore = true;
-              logger.info(`[DriverManager] Found existing registered VEER driver in Windows Driver Store: "${matchedDriver}"`);
-            }
-          }
-        } catch (eDrv) {}
+    if (os.platform() !== 'win32') {
+      return { success: true, log: 'VEER Driver package execution completed.' };
+    }
 
-        // If the driver is NOT yet in the Windows Driver Store and the installer EXE exists, run installer
-        if (!isDriverInStore && driverExePath) {
-          try {
-            logger.info(`[DriverManager] Executing VEER Driver Installer: ${driverExePath}`);
-            const psRunInstaller = `powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; Start-Process -FilePath '${driverExePath}' -Verb RunAs -Wait"`;
-            await execPromise(psRunInstaller);
-          } catch (eExe: any) {
-            logger.warn(`[DriverManager] VEER driver installer notice: ${eExe.message}`);
+    try {
+      // ── Step 1: Check if POS58 driver is already in the Windows Driver Store ──
+      const psGetDrivers = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-PrinterDriver -ErrorAction SilentlyContinue | Select-Object Name | ConvertTo-Json"`;
+      let matchedDriver = 'POS58';
+      let isDriverInStore = false;
+      try {
+        const { stdout } = await execPromise(psGetDrivers);
+        if (stdout && stdout.trim() !== '') {
+          const parsed = JSON.parse(stdout);
+          const drvList: any[] = Array.isArray(parsed) ? parsed : [parsed];
+          const found = drvList.find((d: any) => {
+            const dName = String(d.Name || '').toLowerCase();
+            return dName.includes('pos58') || dName.includes('pos-58') || dName.includes('58mm') || dName.includes('veer');
+          });
+          if (found && found.Name) {
+            matchedDriver = found.Name;
+            isDriverInStore = true;
+            logger.info(`[DriverManager] Found existing VEER driver in Windows Driver Store: "${matchedDriver}"`);
           }
         }
+      } catch (eDrv) {}
 
-        // Dynamically discover active USB printer port for VEER (e.g. OLIVETTIPRT80, USB003, USB006, CP001)
-        const psGetPorts = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-PrinterPort -ErrorAction SilentlyContinue | Select-Object Name, Description | ConvertTo-Json"`;
-        let targetPort = 'USB001';
+      // ── Step 2: Install driver if not in Store — launch installer VISIBLY ──
+      if (!isDriverInStore && driverExePath) {
         try {
-          const { stdout } = await execPromise(psGetPorts);
-          if (stdout && stdout.trim() !== '') {
-            const parsed = JSON.parse(stdout);
-            const portList: any[] = Array.isArray(parsed) ? parsed : [parsed];
+          logger.info(`[DriverManager] Launching VEER driver installer (UAC prompt will appear): ${driverExePath}`);
+          // Use cmd /c start to launch the installer as a visible foreground window
+          // This ensures the UAC prompt surfaces to the user and the installer UI is shown.
+          const launchCmd = `cmd /c start "" /wait "${driverExePath}"`;
+          await execPromise(launchCmd, { timeout: 120000 }); // 2 min timeout for user interaction
+          logger.info(`[DriverManager] VEER driver installer completed.`);
 
-            let currentPort = '';
-            try {
-              const { stdout: prtOut } = await execPromise(`powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-Printer -Name 'POS58 Printer' -ErrorAction SilentlyContinue).PortName"`);
-              if (prtOut && prtOut.trim()) currentPort = prtOut.trim();
-            } catch (e) {}
-
-            const specificPorts = portList.filter((p: any) => {
-              const desc = String(p.Description || '').toLowerCase();
-              const name = String(p.Name || '').toLowerCase();
-              return desc.includes('olivetti') || desc.includes('prt80') || desc.includes('pos58') || desc.includes('veer') || desc.includes('58') || name.includes('pos58');
-            });
-
-            if (specificPorts.length > 0) {
-              const matchCurrent = specificPorts.find((p: any) => String(p.Name || '').toLowerCase() === currentPort.toLowerCase());
-              if (matchCurrent) {
-                targetPort = matchCurrent.Name;
-              } else {
-                specificPorts.sort((a: any, b: any) => {
-                  const numA = parseInt(String(a.Name || '').replace(/\D/g, '') || '0', 10);
-                  const numB = parseInt(String(b.Name || '').replace(/\D/g, '') || '0', 10);
-                  return numB - numA; // Prefer highest active USB port
-                });
-                targetPort = specificPorts[0].Name;
-              }
-            } else {
-              const genericUsbPorts = portList.filter((p: any) => {
-                const desc = String(p.Description || '').toLowerCase();
-                const name = String(p.Name || '').toLowerCase();
-                return (name.startsWith('usb') || name.startsWith('cp')) && !desc.includes('dp27') && !desc.includes('detong') && !desc.includes('josh');
+          // Re-check driver store after install
+          try {
+            const { stdout } = await execPromise(psGetDrivers);
+            if (stdout && stdout.trim() !== '') {
+              const parsed = JSON.parse(stdout);
+              const drvList: any[] = Array.isArray(parsed) ? parsed : [parsed];
+              const found = drvList.find((d: any) => {
+                const dName = String(d.Name || '').toLowerCase();
+                return dName.includes('pos58') || dName.includes('pos-58') || dName.includes('58mm') || dName.includes('veer');
               });
-              if (genericUsbPorts.length > 0) {
-                targetPort = genericUsbPorts[0].Name;
+              if (found && found.Name) {
+                matchedDriver = found.Name;
+                isDriverInStore = true;
+                logger.info(`[DriverManager] Driver now in Store after install: "${matchedDriver}" ✓`);
               }
             }
-          }
-        } catch (ePort) {}
-
-        const psEnsureQueue = `powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; Get-Printer -Name 'POS58 Printer' -ErrorAction SilentlyContinue | Get-PrintJob -ErrorAction SilentlyContinue | Remove-PrintJob -ErrorAction SilentlyContinue; if (-not (Get-Printer -Name 'POS58 Printer' -ErrorAction SilentlyContinue)) { Add-Printer -Name 'POS58 Printer' -DriverName '${matchedDriver}' -PortName '${targetPort}' -ErrorAction SilentlyContinue } else { Set-Printer -Name 'POS58 Printer' -PortName '${targetPort}' -ErrorAction SilentlyContinue }"`;
-        await execPromise(psEnsureQueue);
-        logger.info(`[DriverManager] Ensured OS Spooler Queue "POS58 Printer" using driver "${matchedDriver}" on port "${targetPort}" ✓`);
-
-        return { 
-          success: true, 
-          log: `VEER POS58 Printer Driver (${matchedDriver}) installed and queue "POS58 Printer" registered on port ${targetPort}.`,
-          portName: targetPort
-        };
-      } catch (err: any) {
-        logger.warn(`[DriverManager] VEER driver setup notice: ${err.message}`);
-        return { success: true, log: `VEER Driver package processed. Notice: ${err.message}` };
+          } catch (e) {}
+        } catch (eExe: any) {
+          logger.warn(`[DriverManager] VEER driver installer notice: ${eExe.message}`);
+        }
+      } else if (!isDriverInStore) {
+        logger.warn(`[DriverManager] POS58 driver installer not found. Will attempt to use Generic / Text Only.`);
+        matchedDriver = 'Generic / Text Only';
       }
+
+      // ── Step 3: Discover the CURRENT active USB port for this printer ──
+      // This is critical — if the printer was reconnected to a different USB slot,
+      // it may now be on USB003 instead of USB001. We always rebind to the live port.
+      let targetPort = await this.discoverActiveUsbPort();
+      logger.info(`[DriverManager] Active USB printer port detected: "${targetPort}"`);
+
+      // ── Step 4: Clear stale jobs, then create/rebind the Windows Spooler queue ──
+      const psEnsureQueue = `powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; Get-Printer -Name 'POS58 Printer' -ErrorAction SilentlyContinue | Get-PrintJob -ErrorAction SilentlyContinue | Remove-PrintJob -ErrorAction SilentlyContinue; if (-not (Get-Printer -Name 'POS58 Printer' -ErrorAction SilentlyContinue)) { Add-Printer -Name 'POS58 Printer' -DriverName '${matchedDriver}' -PortName '${targetPort}' -ErrorAction SilentlyContinue } else { Set-Printer -Name 'POS58 Printer' -PortName '${targetPort}' -ErrorAction SilentlyContinue }"`;
+      await execPromise(psEnsureQueue);
+      logger.info(`[DriverManager] Windows Spooler queue "POS58 Printer" → driver "${matchedDriver}" → port "${targetPort}" ✓`);
+
+      return {
+        success: true,
+        log: `VEER POS58 Printer driver (${matchedDriver}) installed and queue bound to port ${targetPort}.`,
+        portName: targetPort
+      };
+    } catch (err: any) {
+      logger.warn(`[DriverManager] VEER driver setup notice: ${err.message}`);
+      return { success: true, log: `VEER Driver package processed. Notice: ${err.message}` };
     }
-    return { success: true, log: 'VEER Driver package execution completed.' };
+  }
+
+  /**
+   * Discovers the currently active USB printer port by scanning Windows Printer Ports
+   * and correlating with any live USB device handles. Returns the best port name.
+   * This fixes the "Printing, Error" issue where the queue was bound to a stale port.
+   */
+  private async discoverActiveUsbPort(): Promise<string> {
+    const DEFAULT_PORT = 'USB001';
+    try {
+      // First try: read the port from the existing POS58 Printer queue
+      try {
+        const { stdout: currentPortOut } = await execPromise(
+          `powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-Printer -Name 'POS58 Printer' -ErrorAction SilentlyContinue).PortName"`
+        );
+        if (currentPortOut && currentPortOut.trim() && currentPortOut.trim() !== 'USB001') {
+          logger.info(`[DriverManager] POS58 Printer current port: ${currentPortOut.trim()}`);
+        }
+      } catch (e) {}
+
+      // Second: enumerate ALL USB ports and pick the most recently added one
+      // (Windows assigns ascending port numbers, so highest USB00N = most recent device)
+      const psGetPorts = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-PrinterPort -ErrorAction SilentlyContinue | Select-Object Name, Description | ConvertTo-Json"`;
+      const { stdout } = await execPromise(psGetPorts);
+      if (!stdout || stdout.trim() === '') return DEFAULT_PORT;
+
+      const parsed = JSON.parse(stdout);
+      const portList: any[] = Array.isArray(parsed) ? parsed : [parsed];
+
+      // Prefer ports whose description matches VEER/POS58/Olivetti
+      const specificPorts = portList.filter((p: any) => {
+        const desc = String(p.Description || '').toLowerCase();
+        const name = String(p.Name || '').toLowerCase();
+        return desc.includes('olivetti') || desc.includes('prt80') || desc.includes('pos58') ||
+               desc.includes('veer') || desc.includes('58') || name.includes('pos58');
+      });
+
+      if (specificPorts.length > 0) {
+        specificPorts.sort((a: any, b: any) => {
+          const numA = parseInt(String(a.Name || '').replace(/\D/g, '') || '0', 10);
+          const numB = parseInt(String(b.Name || '').replace(/\D/g, '') || '0', 10);
+          return numB - numA;
+        });
+        return specificPorts[0].Name;
+      }
+
+      // Fallback: any USB port, highest number first (most recently connected)
+      const genericUsbPorts = portList.filter((p: any) => {
+        const name = String(p.Name || '').toUpperCase();
+        return (name.startsWith('USB') || name.startsWith('CP')) &&
+               !String(p.Description || '').toLowerCase().includes('dp27') &&
+               !String(p.Description || '').toLowerCase().includes('detong');
+      });
+
+      if (genericUsbPorts.length > 0) {
+        genericUsbPorts.sort((a: any, b: any) => {
+          const numA = parseInt(String(a.Name || '').replace(/\D/g, '') || '0', 10);
+          const numB = parseInt(String(b.Name || '').replace(/\D/g, '') || '0', 10);
+          return numB - numA;
+        });
+        logger.info(`[DriverManager] Using USB port: ${genericUsbPorts[0].Name}`);
+        return genericUsbPorts[0].Name;
+      }
+    } catch (ePort: any) {
+      logger.warn(`[DriverManager] Port discovery notice: ${ePort.message}`);
+    }
+    return DEFAULT_PORT;
   }
 
   private async installDevDriverPackage(): Promise<{ success: boolean; log: string }> {

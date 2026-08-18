@@ -154,11 +154,44 @@ export class PrinterSetupOrchestrator {
         logger.info(`[V1 Pipeline] Driver/Product installation already exists: "${driverStatus.queueName}"`);
         this.stateService.updateState({
           step: 'DRIVER_VERIFIED',
-          stepMessage: `Driver installation already exists (${driverStatus.queueName || brand} driver is installed on PC).`,
+          stepMessage: `Driver installation already exists (${driverStatus.queueName || brand} driver is installed on PC). Rebinding to active USB port...`,
           progressPercent: 65,
           driverInstalled: true,
           queueName: driverStatus.queueName,
         });
+
+        // Even if driver is already installed, rebind queue to the CURRENT USB port.
+        // The printer may have been reconnected to a different USB slot since last setup.
+        if (os.platform() === 'win32') {
+          try {
+            const psGetPorts = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-PrinterPort -ErrorAction SilentlyContinue | Select-Object Name, Description | ConvertTo-Json"`;
+            const { stdout: portsOut } = await execPromise(psGetPorts);
+            if (portsOut && portsOut.trim()) {
+              const portParsed = JSON.parse(portsOut);
+              const portList: any[] = Array.isArray(portParsed) ? portParsed : [portParsed];
+              // Pick highest USB port (most recently connected device)
+              const usbPorts = portList
+                .filter((p: any) => {
+                  const n = String(p.Name || '').toUpperCase();
+                  return n.startsWith('USB') || n.startsWith('CP');
+                })
+                .sort((a: any, b: any) => {
+                  const numA = parseInt(String(a.Name || '').replace(/\D/g, '') || '0', 10);
+                  const numB = parseInt(String(b.Name || '').replace(/\D/g, '') || '0', 10);
+                  return numB - numA;
+                });
+              if (usbPorts.length > 0) {
+                const livePort = usbPorts[0].Name;
+                const qName = driverStatus.queueName || 'POS58 Printer';
+                const psRebind = `powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; Get-Printer -Name '${qName}' -ErrorAction SilentlyContinue | Get-PrintJob -ErrorAction SilentlyContinue | Remove-PrintJob -ErrorAction SilentlyContinue; Set-Printer -Name '${qName}' -PortName '${livePort}' -ErrorAction SilentlyContinue"`;
+                await execPromise(psRebind);
+                logger.info(`[V1 Pipeline] Rebound "${qName}" queue to live USB port "${livePort}" ✓`);
+              }
+            }
+          } catch (eRebind: any) {
+            logger.warn(`[V1 Pipeline] Port rebind notice: ${eRebind.message}`);
+          }
+        }
       } else {
         this.stateService.updateState({
           step: 'INSTALLING_DRIVER',
