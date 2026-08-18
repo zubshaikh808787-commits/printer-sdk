@@ -113,9 +113,12 @@ export class TestPrintService {
   ): Promise<JoshTestPrintResult> {
     logger.info(`[TestPrintService] Initiating REAL automated physical test print to target queue: "${targetPrinterName}" [Brand: ${profile.brand}]`);
 
+    /* JOSH COMMENTED OUT
     if (profile.brand === 'JOSH') {
       return this.printJoshLabel(targetPrinterName);
-    } else if (profile.brand === 'VEER') {
+    } else
+    */
+    if (profile.brand === 'VEER' || profile.brand === 'UNSUPPORTED' as any) {
       const vRes = await this.printVeerReceipt(targetPrinterName);
       return {
         success: vRes.success,
@@ -127,18 +130,17 @@ export class TestPrintService {
         message: vRes.message,
       };
     } else if (profile.brand === 'DEV') {
-      const resLabel = await this.printJoshLabel(targetPrinterName);
       const resReceipt = await this.printVeerReceipt(targetPrinterName);
       return {
-        success: resLabel.success && resReceipt.success,
-        stage: resLabel.stage || 'JOB_COMPLETED',
-        code: resLabel.success && resReceipt.success ? 'SUCCESS' : 'DEV_DUAL_PRINT_FAILED',
+        success: resReceipt.success,
+        stage: 'JOB_COMPLETED',
+        code: resReceipt.success ? 'SUCCESS' : 'DEV_DUAL_PRINT_FAILED',
         printerName: targetPrinterName,
         brand: 'DEV',
         queueName: targetPrinterName,
-        message: resLabel.success && resReceipt.success
-          ? `DEV Dual Test Print Success! Printed 50x50mm Label & 58mm Receipt to "${targetPrinterName}".`
-          : `DEV Dual Test Print Error: Label (${resLabel.message}), Receipt (${resReceipt.message}).`,
+        message: resReceipt.success
+          ? `DEV Test Print Success! Printed 58mm Receipt to "${targetPrinterName}".`
+          : `DEV Test Print Error: Receipt (${resReceipt.message}).`,
       };
     }
 
@@ -357,15 +359,15 @@ export class TestPrintService {
         if (isVeerRequest) {
           const veerMatch = list.find((p: any) => {
             const n = String(p.Name || '').toLowerCase();
-            return n.includes('pos58') || n.includes('pos-58') || n.includes('veer') || n.includes('receipt');
+            return n.includes('pos58') || n.includes('pos-58') || n.includes('veer') || n.includes('receipt') || n.includes('58');
           });
           if (veerMatch) return veerMatch.Name;
         } else {
-          const joshMatch = list.find((p: any) => {
+          const defaultVeerMatch = list.find((p: any) => {
             const n = String(p.Name || '').toLowerCase();
-            return n.includes('ld0801') || n.includes('dp27') || n.includes('detong') || n.includes('josh') || n.includes('label');
+            return n.includes('pos58') || n.includes('pos-58') || n.includes('veer') || n.includes('receipt');
           });
-          if (joshMatch) return joshMatch.Name;
+          if (defaultVeerMatch) return defaultVeerMatch.Name;
         }
 
         // 3. Default printer

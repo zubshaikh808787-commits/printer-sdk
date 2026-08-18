@@ -10,12 +10,12 @@ import logger from '../logger';
  * DEV  = Dual mode 80mm Printer (SZ-80D)
  */
 const VID_PID_BRAND_MAP: Record<string, V1PrinterProfileBrand> = {
-  // JOSH (DP27 / 50x50mm Thermal Label Printer)
-  '4B43:2D37': 'JOSH',  // DeTong DP27 / LD0801 label printer
-  '4B43': 'JOSH',       // DeTong / DTPWeb label printer family
-  '2D37': 'JOSH',       // DeTong label printer controller
-  '3533:5A11': 'JOSH',  // DeTong / JOSH USB Printing Support
-  '3533': 'JOSH',
+  // JOSH (DP27 / 50x50mm Thermal Label Printer) - COMMENTED OUT
+  // '4B43:2D37': 'JOSH',
+  // '4B43': 'JOSH',
+  // '2D37': 'JOSH',
+  // '3533:5A11': 'JOSH',
+  // '3533': 'JOSH',
 
   // VEER (58mm Thermal Receipt Printer)
   '0483': 'VEER',       // STMicroelectronics (Most common POS58 microcontroller)
@@ -43,8 +43,7 @@ const VID_PID_BRAND_MAP: Record<string, V1PrinterProfileBrand> = {
 export class PrinterIdentificationService {
   /**
    * Automatically identifies the connected USB printer hardware brand.
-   * JOSH -> JOSH (Label Printer -> Win Driver Driver JOSH Label Printer.exe)
-   * VEER -> VEER (Receipt Printer -> POS58Setup driver)
+   * VEER -> VEER (Receipt Printer -> POS58 driver)
    * DEV  -> DEV  (Dual mode -> DEV driver)
    */
   identifyHardware(device: DetectedUsbHardware): V1PrinterProfileBrand {
@@ -59,7 +58,8 @@ export class PrinterIdentificationService {
     // STRATEGY 1: Explicit Keyword Matching
     // =============================================
 
-    // Check JOSH (50x50mm Thermal Label Printer)
+    // Check JOSH (Commented Out)
+    /*
     const isJosh = 
       combined.includes('dp27') ||
       combined.includes('josh') ||
@@ -76,6 +76,32 @@ export class PrinterIdentificationService {
       logger.info(`[PrinterIdentificationService] Keyword match → [JOSH] (50x50mm Label Printer)`);
       return 'JOSH';
     }
+    */
+
+    // Check VEER (58mm Thermal Receipt Printer) - PRIMARY TARGET
+    const isVeer = 
+      combined.includes('pos58') ||
+      combined.includes('pos-58') ||
+      combined.includes('pos 58') ||
+      combined.includes('veer') ||
+      combined.includes('58mm') ||
+      combined.includes('58') ||
+      combined.includes('receipt') ||
+      combined.includes('olivetti') ||
+      combined.includes('prt80') ||
+      combined.includes('xprinter') ||
+      combined.includes('zjiang') ||
+      combined.includes('gprinter') ||
+      combined.includes('yxwl') ||
+      combined.includes('printer') ||
+      combined.includes('usbprint') ||
+      combined.includes('usbser') ||
+      combined.includes('thermal');
+
+    if (isVeer) {
+      logger.info(`[PrinterIdentificationService] Keyword match → [VEER] (58mm Receipt Printer)`);
+      return 'VEER';
+    }
 
     // Check DEV (Combo / Dual mode 80mm Printer)
     const isDev = 
@@ -89,26 +115,6 @@ export class PrinterIdentificationService {
     if (isDev) {
       logger.info(`[PrinterIdentificationService] Keyword match → [DEV] (80mm Dual Mode)`);
       return 'DEV';
-    }
-
-    // Check VEER (58mm Thermal Receipt Printer)
-    const isVeer = 
-      combined.includes('pos58') ||
-      combined.includes('pos-58') ||
-      combined.includes('pos 58') ||
-      combined.includes('veer') ||
-      combined.includes('58mm') ||
-      combined.includes('receipt') ||
-      combined.includes('olivetti') ||
-      combined.includes('prt80') ||
-      combined.includes('xprinter') ||
-      combined.includes('zjiang') ||
-      combined.includes('gprinter') ||
-      combined.includes('yxwl');
-
-    if (isVeer) {
-      logger.info(`[PrinterIdentificationService] Keyword match → [VEER] (58mm Receipt Printer)`);
-      return 'VEER';
     }
 
     // =============================================
@@ -136,19 +142,9 @@ export class PrinterIdentificationService {
     }
 
     // =============================================
-    // STRATEGY 3: Generic Label vs Receipt check
+    // STRATEGY 3: Generic Thermal Receipt Fallback
     // =============================================
-    if (combined.includes('label')) {
-      logger.info(`[PrinterIdentificationService] Secondary label match → [JOSH]`);
-      return 'JOSH';
-    }
-
-    if (combined.includes('printer') || combined.includes('usbprint') || combined.includes('usbser')) {
-      logger.info(`[PrinterIdentificationService] Generic thermal printer match → [VEER] (58mm Receipt Printer)`);
-      return 'VEER';
-    }
-
-    logger.warn(`[PrinterIdentificationService] USB device "${device.name}" could not be mapped to a known profile.`);
-    return 'UNSUPPORTED';
+    logger.info(`[PrinterIdentificationService] Defaulting connected USB printer hardware to [VEER] (58mm Receipt Printer)`);
+    return 'VEER';
   }
 }

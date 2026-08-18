@@ -4,9 +4,11 @@ import logger from '../logger';
 export class PrinterProfileService {
   getProfile(brand: V1PrinterProfileBrand): PrinterProfile {
     switch (brand) {
+      /* JOSH COMMENTED OUT
       case 'JOSH':
         logger.info('[PrinterProfileService] Loaded JOSH Profile (50x50mm TSPL Label)');
         return JOSH_PROFILE;
+      */
       case 'VEER':
         logger.info('[PrinterProfileService] Loaded VEER Profile (58mm ESC/POS Receipt)');
         return VEER_PROFILE;

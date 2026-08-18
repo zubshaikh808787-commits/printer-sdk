@@ -32,9 +32,12 @@ export class DriverManager {
             const name = String(p.Name || '').toLowerCase();
             const drv = String(p.DriverName || '').toLowerCase();
 
+            /* JOSH COMMENTED OUT
             if (brand === 'JOSH') {
               return name.includes('dp27') || name.includes('josh') || name.includes('ld0801') || name.includes('label') || name.includes('detong') || drv.includes('dp27') || drv.includes('josh') || drv.includes('label') || drv.includes('detong');
-            } else if (brand === 'VEER') {
+            } else
+            */
+            if (brand === 'VEER') {
               return name.includes('pos58') || name.includes('pos-58') || name.includes('veer') || name.includes('receipt') || drv.includes('pos58') || drv.includes('pos-58') || drv.includes('veer') || drv.includes('receipt');
             } else if (brand === 'DEV') {
               return name.includes('dev') || name.includes('sz-80d') || name.includes('pos80') || drv.includes('dev') || drv.includes('sz-80d') || name.includes('dp27') || name.includes('pos58');
@@ -77,67 +80,38 @@ export class DriverManager {
   /**
    * Automatically executes the official driver installer package for the detected brand.
    */
-  async installDriverAutomatically(brand: V1PrinterProfileBrand): Promise<{ success: boolean; log: string }> {
+  async installDriverAutomatically(brand: V1PrinterProfileBrand): Promise<{ success: boolean; log: string; portName?: string }> {
     logger.info(`[DriverManager] Executing automated driver installation pipeline for brand [${brand}]...`);
 
     if (brand === 'VEER') {
       return this.installVeerDriverPackage();
-    } else if (brand === 'JOSH') {
+    }
+    /* JOSH COMMENTED OUT
+    else if (brand === 'JOSH') {
       return this.installJoshDriverPackage();
-    } else if (brand === 'DEV') {
+    }
+    */
+    else if (brand === 'DEV') {
       return this.installDevDriverPackage();
     }
 
     return { success: false, log: 'Unsupported brand driver request.' };
   }
 
+  /* JOSH COMMENTED OUT
   private async installJoshDriverPackage(): Promise<{ success: boolean; log: string }> {
-    const resourcesPath = (process as any).resourcesPath || process.cwd();
-    const candidates = [
-      path.join(resourcesPath, 'driver-packages/josh-files/Win Driver Driver JOSH Label Printer.exe'),
-      path.join(resourcesPath, 'driver-packages/josh-files/DTPWeb-Inst-2.1.2022.1230.exe'),
-      path.resolve(process.cwd(), 'backend/src/config/josh-files/Win Driver Driver JOSH Label Printer.exe'),
-      path.resolve(process.cwd(), 'backend/src/config/josh-files/DTPWeb-Inst-2.1.2022.1230.exe'),
-      path.resolve(__dirname, '../../../backend/src/config/josh-files/Win Driver Driver JOSH Label Printer.exe'),
-      path.resolve(__dirname, '../../../backend/src/config/josh-files/DTPWeb-Inst-2.1.2022.1230.exe'),
-      'C:\\Users\\omen\\OneDrive\\Desktop\\josh-files\\Win Driver Driver JOSH Label Printer.exe',
-      'C:\\Users\\omen\\OneDrive\\Desktop\\josh-files\\DTPWeb-Inst-2.1.2022.1230.exe',
-      'C:\\Users\\omen\\Downloads\\DTPWeb-Inst-2.6.2026.0101.exe',
-    ];
-
-    const targetExe = this.findDriverExe(candidates);
-
-    if (os.platform() === 'win32') {
-      try {
-        // Step 1: Ensure OS Spooler queue "LD0801 Label Printer" exists on port USB001 from staged driver
-        const psEnsureQueue = `powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; Add-PrinterDriver -Name 'DP27 Label Printer'; if (-not (Get-Printer -Name 'LD0801 Label Printer' -ErrorAction SilentlyContinue)) { Add-Printer -Name 'LD0801 Label Printer' -DriverName 'DP27 Label Printer' -PortName 'USB001' }"`;
-        await execPromise(psEnsureQueue);
-        logger.info('[DriverManager] Ensured OS Spooler Queue "LD0801 Label Printer" on port USB001 ✓');
-
-        // Step 2: If targetExe exists, run installer safely
-        if (targetExe) {
-          try {
-            logger.info(`[DriverManager] Executing driver installer package: ${targetExe}`);
-            const psRun = `powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; Start-Process -FilePath '${targetExe}' -Wait"`;
-            await execPromise(psRun);
-          } catch (eExe: any) {
-            logger.warn(`[DriverManager] JOSH driver installer notice: ${eExe.message}`);
-          }
-        }
-
-        return { success: true, log: `JOSH Driver ("LD0801 Label Printer") verified & ready.` };
-      } catch (err: any) {
-        logger.warn(`[DriverManager] JOSH driver setup notice: ${err.message}`);
-        return { success: true, log: `JOSH Driver package ready.` };
-      }
-    }
-    return { success: true, log: 'JOSH Driver package execution completed.' };
+    return { success: true, log: 'JOSH Driver package execution disabled.' };
   }
+  */
 
-  private async installVeerDriverPackage(): Promise<{ success: boolean; log: string }> {
+  private async installVeerDriverPackage(): Promise<{ success: boolean; log: string; portName?: string }> {
     const resourcesPath = (process as any).resourcesPath || process.cwd();
+    const execDir = path.dirname(process.execPath || '');
     const candidates = [
+      path.join(resourcesPath, 'driver-packages', 'veer-files', 'POS58Setup_20210916.exe'),
       path.join(resourcesPath, 'driver-packages/veer-files/POS58Setup_20210916.exe'),
+      path.join(execDir, 'resources', 'driver-packages', 'veer-files', 'POS58Setup_20210916.exe'),
+      path.resolve(process.cwd(), 'backend', 'src', 'config', 'veer-files', 'POS58Setup_20210916.exe'),
       path.resolve(process.cwd(), 'backend/src/config/veer-files/POS58Setup_20210916.exe'),
       path.resolve(__dirname, '../../../backend/src/config/veer-files/POS58Setup_20210916.exe'),
       'C:\\Users\\omen\\OneDrive\\Desktop\\VEER Thermal printer files\\POS58Setup_20210916.exe',
@@ -149,19 +123,10 @@ export class DriverManager {
 
     if (os.platform() === 'win32') {
       try {
-        if (driverExePath) {
-          try {
-            logger.info(`[DriverManager] Executing VEER Driver Installer: ${driverExePath}`);
-            const psRunInstaller = `powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; Start-Process -FilePath '${driverExePath}' -Verb RunAs -Wait"`;
-            await execPromise(psRunInstaller);
-          } catch (eExe: any) {
-            logger.warn(`[DriverManager] VEER driver installer notice: ${eExe.message}`);
-          }
-        }
-
         // Dynamically discover registered driver name (POS58, POS-58, Generic / Text Only)
         const psGetDrivers = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-PrinterDriver -ErrorAction SilentlyContinue | Select-Object Name | ConvertTo-Json"`;
         let matchedDriver = 'POS58';
+        let isDriverInStore = false;
         try {
           const { stdout } = await execPromise(psGetDrivers);
           if (stdout && stdout.trim() !== '') {
@@ -173,11 +138,24 @@ export class DriverManager {
             });
             if (found && found.Name) {
               matchedDriver = found.Name;
+              isDriverInStore = true;
+              logger.info(`[DriverManager] Found existing registered VEER driver in Windows Driver Store: "${matchedDriver}"`);
             }
           }
         } catch (eDrv) {}
 
-        // Dynamically discover active USB printer port for VEER (e.g. OLIVETTIPRT80, USB006, USB003)
+        // If the driver is NOT yet in the Windows Driver Store and the installer EXE exists, run installer
+        if (!isDriverInStore && driverExePath) {
+          try {
+            logger.info(`[DriverManager] Executing VEER Driver Installer: ${driverExePath}`);
+            const psRunInstaller = `powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; Start-Process -FilePath '${driverExePath}' -Verb RunAs -Wait"`;
+            await execPromise(psRunInstaller);
+          } catch (eExe: any) {
+            logger.warn(`[DriverManager] VEER driver installer notice: ${eExe.message}`);
+          }
+        }
+
+        // Dynamically discover active USB printer port for VEER (e.g. OLIVETTIPRT80, USB003, USB006, CP001)
         const psGetPorts = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-PrinterPort -ErrorAction SilentlyContinue | Select-Object Name, Description | ConvertTo-Json"`;
         let targetPort = 'USB001';
         try {
@@ -206,7 +184,7 @@ export class DriverManager {
                 specificPorts.sort((a: any, b: any) => {
                   const numA = parseInt(String(a.Name || '').replace(/\D/g, '') || '0', 10);
                   const numB = parseInt(String(b.Name || '').replace(/\D/g, '') || '0', 10);
-                  return numA - numB;
+                  return numB - numA; // Prefer highest active USB port
                 });
                 targetPort = specificPorts[0].Name;
               }
@@ -214,7 +192,7 @@ export class DriverManager {
               const genericUsbPorts = portList.filter((p: any) => {
                 const desc = String(p.Description || '').toLowerCase();
                 const name = String(p.Name || '').toLowerCase();
-                return name.startsWith('usb') && !desc.includes('dp27') && !desc.includes('detong') && !desc.includes('josh') && desc !== 'virtual printer port for usb';
+                return (name.startsWith('usb') || name.startsWith('cp')) && !desc.includes('dp27') && !desc.includes('detong') && !desc.includes('josh');
               });
               if (genericUsbPorts.length > 0) {
                 targetPort = genericUsbPorts[0].Name;
@@ -227,7 +205,11 @@ export class DriverManager {
         await execPromise(psEnsureQueue);
         logger.info(`[DriverManager] Ensured OS Spooler Queue "POS58 Printer" using driver "${matchedDriver}" on port "${targetPort}" ✓`);
 
-        return { success: true, log: `VEER POS58 Printer Driver (${matchedDriver}) installed and queue "POS58 Printer" registered on port ${targetPort}.` };
+        return { 
+          success: true, 
+          log: `VEER POS58 Printer Driver (${matchedDriver}) installed and queue "POS58 Printer" registered on port ${targetPort}.`,
+          portName: targetPort
+        };
       } catch (err: any) {
         logger.warn(`[DriverManager] VEER driver setup notice: ${err.message}`);
         return { success: true, log: `VEER Driver package processed. Notice: ${err.message}` };

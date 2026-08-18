@@ -203,18 +203,26 @@ export const WePrintSetup: React.FC = () => {
               </div>
 
               <div className="flex justify-center p-4 bg-slate-100/80 rounded-2xl border border-slate-200 min-h-[260px] items-center">
-                {v1State.brand === 'JOSH' ? (
-                  <div className="w-[180px] h-[180px] bg-white border-2 border-slate-800 rounded-lg shadow-xl p-3 flex flex-col justify-between text-center select-none">
-                    <div className="text-[12px] font-black uppercase text-slate-900">JOSH TEST LABEL</div>
-                    <div className="text-[8px] font-bold text-blue-600">50mm × 50mm TSPL</div>
-                    <div className="text-[8px] font-bold text-emerald-600">REAL PRINT VERIFIED</div>
-                    <div className="text-[9px] font-mono font-bold text-slate-900">SEZNIK-JOSH</div>
-                  </div>
-                ) : v1State.brand === 'VEER' ? (
+                {v1State.brand === 'VEER' || v1State.usbConnected ? (
                   <div className="w-[190px] bg-white border border-slate-300 shadow-xl rounded-b-lg p-3 text-slate-800 font-mono text-[9px] space-y-1.5">
                     <div className="text-center font-bold">SEZNIK POS STORE</div>
                     <div className="text-center text-[8px] text-slate-500">58mm Thermal Receipt</div>
-                    <div className="text-[8px] text-emerald-700 font-bold text-center">REAL PRINT VERIFIED</div>
+                    <div className="border-t border-b border-dashed border-slate-300 py-1 space-y-0.5">
+                      <div className="flex justify-between">
+                        <span>ITEM 1</span>
+                        <span>₹150.00</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>ITEM 2</span>
+                        <span>₹250.00</span>
+                      </div>
+                      <div className="flex justify-between font-bold pt-0.5">
+                        <span>TOTAL</span>
+                        <span>₹400.00</span>
+                      </div>
+                    </div>
+                    <div className="text-[8px] text-emerald-700 font-bold text-center">REAL PRINT VERIFIED ✓</div>
+                    <div className="text-center text-[7px] text-slate-400">VEER POS58 AUTO-SETUP</div>
                   </div>
                 ) : (
                   <div className="text-xs text-slate-400 font-medium text-center">

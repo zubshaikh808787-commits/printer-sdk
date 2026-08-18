@@ -39,8 +39,7 @@ export class UsbDiscoveryService {
       // ==========================================
       // Physical USB PnP Bus Scan (Targeted Present-Only Query)
       // Only returns hardware that is physically attached and present right now
-      // ==========================================
-      const psPnpCommand = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { ($_.Status -eq 'OK' -or $_.Status -eq 'Degraded') -and ($_.Class -eq 'Printer' -or $_.PNPClass -eq 'Printer' -or $_.InstanceId -like '*USBPRINT*' -or $_.InstanceId -like '*VID_3533*' -or $_.InstanceId -like '*VID_4B43*' -or $_.InstanceId -like '*VID_0416*' -or $_.InstanceId -like '*VID_0483*' -or $_.InstanceId -like '*VID_0FE6*' -or $_.InstanceId -like '*VID_6845*' -or $_.InstanceId -like '*VID_1A86*' -or $_.Service -eq 'usbprint' -or $_.FriendlyName -like '*POS58*' -or $_.FriendlyName -like '*LD0801*' -or $_.FriendlyName -like '*DP27*' -or $_.FriendlyName -like '*Thermal*') } | Select-Object FriendlyName, Name, Caption, InstanceId, PNPDeviceID, Class, PNPClass, Service | ConvertTo-Json"`;
+      const psPnpCommand = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -like 'USB*' -or $_.InstanceId -like 'USBPRINT*' -or $_.Class -eq 'Printer' -or $_.PNPClass -eq 'Printer' -or $_.Class -eq 'Ports' -or $_.PNPClass -eq 'Ports' -or $_.FriendlyName -like '*POS*' -or $_.FriendlyName -like '*58*' -or $_.FriendlyName -like '*Printer*' -or $_.FriendlyName -like '*Receipt*' } | Select-Object FriendlyName, Name, Caption, InstanceId, PNPDeviceID, Class, PNPClass, Service, Status | ConvertTo-Json"`;
       
       const { stdout: pnpStdout } = await execPromise(psPnpCommand, { maxBuffer: 10 * 1024 * 1024 });
       if (pnpStdout && pnpStdout.trim() !== '') {
@@ -71,7 +70,6 @@ export class UsbDiscoveryService {
               pnpClass === 'hidclass' ||
               lowerName.includes('acpi') ||
               lowerName.includes('thermal zone') ||
-              lowerName.includes('unknown usb device') ||
               pnpId.startsWith('ROOT\\') ||
               pnpId.startsWith('SWD\\')
             ) continue;
@@ -96,22 +94,18 @@ export class UsbDiscoveryService {
               lowerName.includes('printing support') ||
               lowerName.includes('pos') ||
               lowerName.includes('receipt') ||
-              lowerName.includes('label') ||
-              lowerName.includes('josh') ||
               lowerName.includes('veer') ||
               lowerName.includes('dev') ||
-              lowerName.includes('dp27') ||
-              lowerName.includes('detong') ||
-              lowerName.includes('ld0801') ||
               lowerName.includes('pos58') ||
               lowerName.includes('pos80') ||
               lowerName.includes('sz-80d') ||
               lowerName.includes('xprinter') ||
               lowerName.includes('zjiang') ||
               lowerName.includes('gprinter') ||
-              lowerName.includes('dothantech') ||
-              lowerName.includes('dtpweb') ||
-              lowerName.includes('thermal');
+              lowerName.includes('olivetti') ||
+              lowerName.includes('prt80') ||
+              lowerName.includes('thermal') ||
+              lowerName.includes('printer');
 
             if (isPrinterHardware) {
               const vidMatch = pnpId.match(/VID_([0-9A-F]{4})/i);
@@ -123,7 +117,7 @@ export class UsbDiscoveryService {
               if (!seenIds.has(pnpId)) {
                 seenIds.add(pnpId);
                 detected.push({
-                  name: name || 'USB Thermal Printer',
+                  name: name || 'USB POS58 Thermal Printer',
                   vendorId,
                   productId,
                   pnpDeviceId: pnpId,

@@ -57,7 +57,7 @@ export const ConnectUsbModal: React.FC<ConnectUsbModalProps> = ({
 
           <div className="pt-2 border-t border-slate-100 flex items-center justify-center space-x-2 text-[10px] text-slate-400 font-semibold">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Auto-detects JOSH (TSPL 50x50mm) & VEER (ESC/POS 58mm) Hardware</span>
+            <span>Auto-detects VEER (ESC/POS 58mm Thermal Receipt) Hardware</span>
           </div>
         </motion.div>
       </div>

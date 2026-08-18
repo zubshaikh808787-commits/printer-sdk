@@ -9,7 +9,12 @@ import { DefaultPrinterService } from './DefaultPrinterService';
 import { ConfigurationService } from '../../services/ConfigurationService';
 import { PrinterStateService } from './PrinterStateService';
 import { V1OrchestratorState, JoshTestPrintResult } from '../../shared/types';
+import os from 'os';
+import { exec } from 'child_process';
+import util from 'util';
 import logger from '../logger';
+
+const execPromise = util.promisify(exec);
 
 export class PrinterSetupOrchestrator {
   private usbDiscovery: UsbDiscoveryService;
@@ -185,7 +190,7 @@ export class PrinterSetupOrchestrator {
       if (!queueName || invalidPnpNames.includes(queueName.trim().toLowerCase())) {
         queueName = targetHardware.name && !invalidPnpNames.includes(targetHardware.name.trim().toLowerCase()) 
           ? targetHardware.name 
-          : (brand === 'JOSH' ? 'LD0801 Label Printer' : brand === 'VEER' ? 'POS58 Printer' : 'SZ-80D Printer');
+          : (brand === 'VEER' ? 'POS58 Printer' : 'SZ-80D Printer');
       }
 
       this.stateService.updateState({
@@ -212,15 +217,26 @@ export class PrinterSetupOrchestrator {
         progressPercent: 75,
       });
 
+      // Dynamically discover actual assigned port for this printer
+      let detectedPort = (driverStatus as any).portName || 'USB001';
+      if (os.platform() === 'win32') {
+        try {
+          const { stdout: pOut } = await execPromise(`powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-Printer -Name '${queueName}' -ErrorAction SilentlyContinue).PortName"`);
+          if (pOut && pOut.trim()) {
+            detectedPort = pOut.trim();
+          }
+        } catch (e) {}
+      }
+
       const savedPrinterId = `seznik-${queueName.replace(/\s+/g, '-').toLowerCase()}`;
       await this.appConfig.savePrinter({
         id: savedPrinterId,
         name: queueName,
         driverName: driverStatus.driverName || `${brand} Driver`,
-        portName: 'USB001',
+        portName: detectedPort,
         connectionType: 'USB',
         isDefault: true,
-        printerType: brand === 'JOSH' ? 'LABEL' : brand === 'VEER' ? 'RECEIPT' : 'RECEIPT_AND_LABEL',
+        printerType: brand === 'VEER' ? 'RECEIPT' : 'RECEIPT_AND_LABEL',
       });
 
       // Step 6: Set Default
@@ -244,14 +260,14 @@ export class PrinterSetupOrchestrator {
 
       // BACKEND AUTOMATED TEST PRINT (Executed strictly AFTER overall 7-step completion complete!)
       logger.info(`================ OVERALL 7-STEP SETUP COMPLETED SUCCESSFULLY ================`);
-      logger.info(`[Backend Command] Transmitting 1 single test print label to physical printer "${queueName}"...`);
+      logger.info(`[Backend Command] Transmitting 1 single test print receipt to physical printer "${queueName}"...`);
       
       const printResult = await this.testPrintService.executeAutomatedTestPrint(queueName, profile);
 
       if (!printResult.success) {
         logger.warn(`[Backend Notice] Test print job notice: ${printResult.message}`);
       } else {
-        logger.info(`[Backend Notice] Test print delivered 1 single label to "${queueName}" post-setup completion ✓`);
+        logger.info(`[Backend Notice] Test print delivered 1 single receipt to "${queueName}" post-setup completion ✓`);
       }
 
       this.stateService.updateState({
@@ -304,14 +320,10 @@ export class PrinterSetupOrchestrator {
 
     if (!queueName || queueName.trim() === '' || queueName.toLowerCase() === 'none') {
       const driverCheckVeer = await this.driverManager.checkDriverInstalled('VEER');
-      const driverCheckJosh = await this.driverManager.checkDriverInstalled('JOSH');
       
       if (driverCheckVeer.installed) {
         queueName = driverCheckVeer.queueName || 'POS58 Printer';
         brand = 'VEER';
-      } else if (driverCheckJosh.installed) {
-        queueName = driverCheckJosh.queueName || 'LD0801 Label Printer';
-        brand = 'JOSH';
       } else {
         queueName = 'POS58 Printer';
         brand = 'VEER';
@@ -319,7 +331,7 @@ export class PrinterSetupOrchestrator {
     }
 
     if (!brand || brand === 'UNSUPPORTED') {
-      brand = queueName.toLowerCase().includes('pos58') || queueName.toLowerCase().includes('veer') || queueName.toLowerCase().includes('receipt') ? 'VEER' : 'JOSH';
+      brand = 'VEER';
     }
 
     logger.info(`[PrinterSetupOrchestrator] Manual test print invoked for target queue "${queueName}" [Brand: ${brand}]`);
