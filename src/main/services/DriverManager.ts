@@ -98,6 +98,88 @@ export class DriverManager {
     return { success: false, log: 'Unsupported brand driver request.' };
   }
 
+  /**
+   * Bluetooth-safe driver registration: ONLY ensures the POS58 driver is in the
+   * Windows Driver Store. Does NOT create any printer queue, does NOT discover
+   * USB ports — those are handled separately by BluetoothPrinterTransport which
+   * binds the queue to a COM port instead.
+   */
+  async installDriverOnly(brand: V1PrinterProfileBrand): Promise<{ success: boolean; driverName: string }> {
+    if (os.platform() !== 'win32') {
+      return { success: false, driverName: '' };
+    }
+
+    logger.info(`[DriverManager] installDriverOnly: Ensuring driver for [${brand}] is in Windows Driver Store...`);
+
+    // Step 1: Check if driver already exists in Store
+    const psGetDrivers = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-PrinterDriver -ErrorAction SilentlyContinue | Select-Object Name | ConvertTo-Json"`;
+    try {
+      const { stdout } = await execPromise(psGetDrivers);
+      if (stdout && stdout.trim() !== '') {
+        const parsed = JSON.parse(stdout);
+        const drvList: any[] = Array.isArray(parsed) ? parsed : [parsed];
+        const keywords = brand === 'DEV'
+          ? ['pos58', 'pos-58', '58mm', 'veer', 'dev', 'sz-80d', 'pos80']
+          : ['pos58', 'pos-58', '58mm', 'veer'];
+        const found = drvList.find((d: any) => {
+          const dName = String(d.Name || '').toLowerCase();
+          return keywords.some(k => dName.includes(k));
+        });
+        if (found && found.Name) {
+          logger.info(`[DriverManager] installDriverOnly: Driver already in Store: "${found.Name}" ✓`);
+          return { success: true, driverName: found.Name };
+        }
+      }
+    } catch (e) {}
+
+    // Step 2: Driver not in Store — run the bundled installer EXE
+    const resourcesPath = (process as any).resourcesPath || process.cwd();
+    const execDir = path.dirname(process.execPath || '');
+    const candidates = [
+      path.join(resourcesPath, 'driver-packages', 'veer-files', 'POS58Setup_20210916.exe'),
+      path.join(resourcesPath, 'driver-packages/veer-files/POS58Setup_20210916.exe'),
+      path.join(execDir, 'resources', 'driver-packages', 'veer-files', 'POS58Setup_20210916.exe'),
+      path.resolve(process.cwd(), 'backend', 'src', 'config', 'veer-files', 'POS58Setup_20210916.exe'),
+      path.resolve(process.cwd(), 'backend/src/config/veer-files/POS58Setup_20210916.exe'),
+      path.resolve(__dirname, '../../../backend/src/config/veer-files/POS58Setup_20210916.exe'),
+      'C:\\\\Users\\\\omen\\\\OneDrive\\\\Desktop\\\\VEER Thermal printer files\\\\POS58Setup_20210916.exe',
+      'C:\\\\Users\\\\omen\\\\Downloads\\\\VEER Thermal printer files\\\\POS58Setup_20210916.exe',
+      'C:\\\\Users\\\\omen\\\\Downloads\\\\POS58Setup_20210916.exe',
+    ];
+
+    const driverExePath = this.findDriverExe(candidates);
+    if (driverExePath) {
+      try {
+        logger.info(`[DriverManager] installDriverOnly: Running installer: ${driverExePath}`);
+        const psRunInstaller = `powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; Start-Process -FilePath '${driverExePath}' -Verb RunAs -Wait"`;
+        await execPromise(psRunInstaller);
+      } catch (eExe: any) {
+        logger.warn(`[DriverManager] installDriverOnly: Installer notice: ${eExe.message}`);
+      }
+    }
+
+    // Step 3: Re-check Driver Store after installation
+    try {
+      const { stdout } = await execPromise(psGetDrivers);
+      if (stdout && stdout.trim() !== '') {
+        const parsed = JSON.parse(stdout);
+        const drvList: any[] = Array.isArray(parsed) ? parsed : [parsed];
+        const found = drvList.find((d: any) => {
+          const dName = String(d.Name || '').toLowerCase();
+          return dName.includes('pos58') || dName.includes('pos-58') || dName.includes('58mm') || dName.includes('veer');
+        });
+        if (found && found.Name) {
+          logger.info(`[DriverManager] installDriverOnly: Driver now in Store after install: "${found.Name}" ✓`);
+          return { success: true, driverName: found.Name };
+        }
+      }
+    } catch (e) {}
+
+    // Fallback: assume POS58 driver name even if we couldn't confirm
+    logger.warn(`[DriverManager] installDriverOnly: Could not confirm driver in Store. Using fallback name 'POS58'.`);
+    return { success: true, driverName: 'POS58' };
+  }
+
   /* JOSH COMMENTED OUT
   private async installJoshDriverPackage(): Promise<{ success: boolean; log: string }> {
     return { success: true, log: 'JOSH Driver package execution disabled.' };

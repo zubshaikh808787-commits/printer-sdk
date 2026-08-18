@@ -5,6 +5,7 @@ import { BluetoothPrinterTransport } from './transport/BluetoothPrinterTransport
 import { ConfigurationService } from '../../services/ConfigurationService';
 import { PrinterCommandGenerator } from './commands/PrinterCommandGenerator';
 import { BluetoothConnectionState, BluetoothPairedDevice, V1PrinterProfileBrand, PrinterType } from '../../shared/types';
+import { DefaultPrinterService } from './DefaultPrinterService';
 
 // Normalizes a device id/mac-address into a stable, comparable key (used both
 // when deriving the persisted SavedPrinter id and when matching a requested
@@ -17,7 +18,9 @@ function normalizeDeviceKey(raw: string): string {
 }
 
 function printerTypeForBrand(brand: V1PrinterProfileBrand): PrinterType {
+  /* JOSH COMMENTED OUT
   if (brand === 'JOSH') return 'LABEL';
+  */
   if (brand === 'DEV') return 'RECEIPT_AND_LABEL';
   return 'RECEIPT';
 }
@@ -173,9 +176,20 @@ export class BluetoothPrinterService {
     const savedId = `seznik-bt-${normalizeDeviceKey(device.id)}`;
     const queueName = await this.resolveQueueName(device.name, savedId);
 
+    // Step 1: CONNECTING — initial state
     this.updateState({
       step: 'CONNECTING',
-      stepMessage: `Setting up "${device.name}" as a ${resolvedBrand === 'JOSH' ? 'label' : 'receipt'} printer...`,
+      stepMessage: `Setting up "${device.name}" as a receipt printer (${resolvedBrand})...`,
+    });
+
+    // Step 2: INSTALLING_DRIVER + CREATING_QUEUE + SETTING_DEFAULT
+    // All handled inside registerPrinterQueue which:
+    //   - Checks/installs POS58 driver (driver-only, no USB queue)
+    //   - Creates Windows Spooler queue on Bluetooth COM port
+    //   - Sets as Windows system default printer
+    this.updateState({
+      step: 'CONNECTING',
+      stepMessage: `Installing driver and creating printer queue for "${device.name}"...`,
     });
 
     const registerResult = await this.transport.registerPrinterQueue(device.comPort, queueName, resolvedBrand);
@@ -187,9 +201,10 @@ export class BluetoothPrinterService {
       });
     }
 
+    // Step 3: CONNECTED — queue is ready
     this.updateState({
       step: 'CONNECTED',
-      stepMessage: `"${queueName}" is ready — find it in any app's Print dialog (Ctrl+P), not just SEZNIK.`,
+      stepMessage: `"${queueName}" is ready and set as system default — find it in any app's Print dialog (Ctrl+P).`,
       connectedDeviceId: device.id,
       connectedDeviceName: device.name,
       connectedComPort: device.comPort,
@@ -201,12 +216,7 @@ export class BluetoothPrinterService {
       lastReachabilityCheck: null,
     });
 
-    // Persist so the printer reappears (and can be reconnected/forgotten) in
-    // Settings and the main printer list — through the SAME config service
-    // the USB pipeline and the rest of the app use, so there's one source of
-    // truth for "what printers does SEZNIK know about."
-    // `name` mirrors the registered Windows queue name so future writes/print
-    // actions elsewhere in the app can target it directly, same as the USB flow.
+    // Step 4: Persist to config + set as default in app
     try {
       await this.appConfig.savePrinter({
         id: savedId,
@@ -223,14 +233,14 @@ export class BluetoothPrinterService {
       logger.warn(`[BluetoothPrinterService] Failed to persist Bluetooth printer: ${persistErr.message}`);
     }
 
-    // Automatically fire the test print (label for JOSH, receipt for VEER/DEV) as part of the connect flow.
+    // Step 5: Automatic test print
     return this.triggerTestPrint();
   }
 
   async triggerTestPrint(): Promise<BluetoothConnectionState> {
     const queueName = this.state.connectedQueueName;
     const brand = this.state.connectedBrand || 'VEER';
-    const jobLabel = brand === 'JOSH' ? 'test label' : 'test receipt';
+    const jobLabel = 'test receipt';
 
     if (!queueName) {
       return this.updateState({

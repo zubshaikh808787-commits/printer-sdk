@@ -105,10 +105,10 @@ export const ConnectBluetoothModal: React.FC<ConnectBluetoothModalProps> = ({ is
             {/* Instructions */}
             <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-[11px] text-slate-600 font-medium leading-relaxed">
               Pair your printer in <strong className="text-slate-800">Windows Settings → Bluetooth & devices</strong> first if it isn't listed
-              below. Connecting here installs it as a real <strong className="text-slate-800">Windows printer</strong> — it'll show up in
-              any app's Print dialog (Ctrl+P), not just SEZNIK. Pick <strong className="text-slate-800">Receipt</strong> for a VEER 58mm printer
-              or <strong className="text-slate-800">Label</strong> for a JOSH 50x50mm label/sticker printer before connecting — SEZNIK guesses
-              from the device name, but correct it if it's wrong.
+              below. Connecting here automatically installs the <strong className="text-slate-800">POS58 driver</strong>, creates a real
+              <strong className="text-slate-800"> Windows printer</strong> queue, sets it as your <strong className="text-slate-800">system default</strong>,
+              and sends a <strong className="text-slate-800">test receipt</strong> — all automatically. The printer will show up in
+              any app's Print dialog (Ctrl+P), not just SEZNIK.
             </div>
 
             {/* Scan bar */}
@@ -187,29 +187,12 @@ export const ConnectBluetoothModal: React.FC<ConnectBluetoothModalProps> = ({ is
                       )}
                     </div>
 
-                    {/* Brand picker — corrects the name-based guess before connecting */}
+                    {/* Brand auto-detected as VEER — shown as info only */}
                     <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center gap-2">
                       <span className="text-[9px] font-black text-slate-400 uppercase tracking-wide">Printer Type:</span>
-                      <div className="flex rounded-lg border border-slate-200 overflow-hidden">
-                        <button
-                          onClick={() => setBrandOverrides(prev => ({ ...prev, [device.id]: 'VEER' }))}
-                          disabled={isThisConnected}
-                          className={`px-2 py-1 text-[10px] font-bold flex items-center gap-1 transition-all ${
-                            selectedBrand === 'VEER' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'
-                          } disabled:cursor-not-allowed`}
-                        >
-                          <Receipt className="w-3 h-3" /> Receipt (VEER)
-                        </button>
-                        <button
-                          onClick={() => setBrandOverrides(prev => ({ ...prev, [device.id]: 'JOSH' }))}
-                          disabled={isThisConnected}
-                          className={`px-2 py-1 text-[10px] font-bold flex items-center gap-1 border-l border-slate-200 transition-all ${
-                            selectedBrand === 'JOSH' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'
-                          } disabled:cursor-not-allowed`}
-                        >
-                          <Tag className="w-3 h-3" /> Label (JOSH)
-                        </button>
-                      </div>
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold bg-blue-600 text-white">
+                        <Receipt className="w-3 h-3" /> Receipt (VEER 58mm)
+                      </span>
                     </div>
                   </div>
                 );
@@ -254,12 +237,10 @@ export const ConnectBluetoothModal: React.FC<ConnectBluetoothModalProps> = ({ is
                   >
                     {bluetoothState.step === 'TEST_PRINTING' ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : bluetoothState.connectedBrand === 'JOSH' ? (
-                      <Tag className="w-3.5 h-3.5 text-blue-600" />
                     ) : (
                       <Receipt className="w-3.5 h-3.5 text-blue-600" />
                     )}
-                    <span>{bluetoothState.connectedBrand === 'JOSH' ? 'Test Label' : 'Test Receipt'}</span>
+                    <span>Test Receipt</span>
                   </button>
 
                   {UPLOAD_ACTIONS.map(({ kind, label, icon: Icon }) => (

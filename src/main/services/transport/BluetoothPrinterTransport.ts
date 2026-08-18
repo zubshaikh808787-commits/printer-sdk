@@ -7,6 +7,7 @@ import logger from '../../logger';
 import { PrintResult, V1PrinterProfileBrand } from '../../../shared/types';
 import { sendRawBytesToPrinterQueue } from '../util/WinSpoolRawPrint';
 import { DriverManager } from '../DriverManager';
+import { DefaultPrinterService } from '../DefaultPrinterService';
 
 const execPromise = util.promisify(exec);
 
@@ -101,6 +102,12 @@ export class BluetoothPrinterTransport {
    * Ensures a real Windows printer queue exists on the given Bluetooth COM
    * port. Idempotent — safe to call again to "reconnect" or rebind after the
    * COM port number changes across a re-pair.
+   *
+   * Flow:
+   * 1. Check if POS58 driver is in the Windows Driver Store
+   * 2. If not, install driver ONLY (no USB queue creation)
+   * 3. Create/update the Windows Spooler queue on the Bluetooth COM port
+   * 4. Set as Windows system default printer
    */
   async registerPrinterQueue(comPort: string, queueName: string, brand: V1PrinterProfileBrand): Promise<RegisterQueueResult> {
     if (os.platform() !== 'win32') {
@@ -108,40 +115,56 @@ export class BluetoothPrinterTransport {
     }
 
     const portName = this.toLocalPortName(comPort);
+
+    // Step 1: Find or install the driver (driver-only, no USB queue side effects)
     let preferredDriver = await this.findPreferredDriver(brand);
 
-    // If official driver (e.g. POS58) is not yet in Driver Store, auto-install from bundled driver package
     if (!preferredDriver) {
       try {
-        logger.info(`[BluetoothPrinterTransport] Driver not yet installed for [${brand}]. Auto-installing bundled driver package...`);
+        logger.info(`[BluetoothPrinterTransport] Driver not found for [${brand}]. Installing driver only (no USB queue)...`);
         const driverManager = new DriverManager();
-        await driverManager.installDriverAutomatically(brand);
-        preferredDriver = await this.findPreferredDriver(brand);
+        const drvResult = await driverManager.installDriverOnly(brand);
+        if (drvResult.success && drvResult.driverName) {
+          preferredDriver = drvResult.driverName;
+        } else {
+          // Re-check after install attempt
+          preferredDriver = await this.findPreferredDriver(brand);
+        }
       } catch (eDrv: any) {
-        logger.warn(`[BluetoothPrinterTransport] Auto driver installation notice: ${eDrv.message}`);
+        logger.warn(`[BluetoothPrinterTransport] Driver installation notice: ${eDrv.message}`);
       }
     }
 
     const driverName = preferredDriver || 'POS58';
+    logger.info(`[BluetoothPrinterTransport] Using driver "${driverName}" for queue "${queueName}" on port "${portName}"`);
 
-    // Escape single quotes defensively — printer/device display names can contain them.
+    // Step 2: Create/update the Windows Spooler queue on the Bluetooth COM port
     const esc = (s: string) => s.replace(/'/g, "''");
 
     try {
-      const psCmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; if (-not (Get-PrinterPort -Name '${esc(portName)}' -ErrorAction SilentlyContinue)) { Add-PrinterPort -Name '${esc(portName)}' -ErrorAction SilentlyContinue }; if (-not (Get-Printer -Name '${esc(queueName)}' -ErrorAction SilentlyContinue)) { Add-Printer -Name '${esc(queueName)}' -DriverName '${esc(driverName)}' -PortName '${esc(portName)}' -ErrorAction SilentlyContinue } else { Set-Printer -Name '${esc(queueName)}' -PortName '${esc(portName)}' -ErrorAction SilentlyContinue }; (New-Object -ComObject WScript.Network).SetDefaultPrinter('${esc(queueName)}')"` ;
+      const psCmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; if (-not (Get-PrinterPort -Name '${esc(portName)}' -ErrorAction SilentlyContinue)) { Add-PrinterPort -Name '${esc(portName)}' -ErrorAction SilentlyContinue }; if (-not (Get-Printer -Name '${esc(queueName)}' -ErrorAction SilentlyContinue)) { Add-Printer -Name '${esc(queueName)}' -DriverName '${esc(driverName)}' -PortName '${esc(portName)}' -ErrorAction SilentlyContinue } else { Set-Printer -Name '${esc(queueName)}' -PortName '${esc(portName)}' -ErrorAction SilentlyContinue }"`;
       await execPromise(psCmd, { timeout: 25000 });
-
-      logger.info(`[BluetoothPrinterTransport] Registered Windows printer "${queueName}" on port "${portName}" using driver "${driverName}" and set as Default ✓`);
-      return {
-        success: true,
-        message: `"${queueName}" installed as Windows Default printer on ${portName} using ${driverName} driver ✓`,
-        driverUsed: driverName,
-      };
+      logger.info(`[BluetoothPrinterTransport] Created/updated Windows queue "${queueName}" on Bluetooth port "${portName}" ✓`);
     } catch (err: any) {
       const detail: string = err.stderr || err.message || 'Unknown error';
-      logger.error(`[BluetoothPrinterTransport] Failed to register Windows printer queue "${queueName}": ${detail}`);
+      logger.error(`[BluetoothPrinterTransport] Failed to create queue "${queueName}": ${detail}`);
       return { success: false, message: `Could not register "${queueName}" as a Windows printer: ${detail}`, driverUsed: driverName };
     }
+
+    // Step 3: Set as Windows system default printer (robust multi-method approach)
+    try {
+      const defaultService = new DefaultPrinterService();
+      await defaultService.setAsDefaultPrinter(queueName);
+      logger.info(`[BluetoothPrinterTransport] Set "${queueName}" as Windows system default printer ✓`);
+    } catch (eDefault: any) {
+      logger.warn(`[BluetoothPrinterTransport] Default printer notice: ${eDefault.message}`);
+    }
+
+    return {
+      success: true,
+      message: `"${queueName}" installed as Windows Default printer on ${portName} using ${driverName} driver ✓`,
+      driverUsed: driverName,
+    };
   }
 
   /** Fully uninstalls the queue (used by "Forget device") — removes it from Ctrl+P everywhere. */

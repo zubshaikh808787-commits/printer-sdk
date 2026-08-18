@@ -7,11 +7,10 @@ import { BluetoothPairedDevice, V1PrinterProfileBrand } from '../../shared/types
 const execPromise = util.promisify(exec);
 
 // Brand-specific keyword sets, mirroring PrinterIdentificationService's USB
-// heuristics — JOSH is the 50x50mm TSPL label printer, VEER the 58mm
-// ESC/POS receipt printer. A Bluetooth device's advertised name is often
-// generic (e.g. "MPT-II"), so this is a best-effort guess the user can
-// still override in the Connect via Bluetooth picker.
+// heuristics. All thermal Bluetooth printers default to VEER (58mm ESC/POS).
+/* JOSH COMMENTED OUT
 const JOSH_KEYWORDS = ['josh', 'dp27', 'ld0801', 'detong', 'dtpweb', 'tspl', 'sticker', 'label', 'dothantech'];
+*/
 const VEER_KEYWORDS = [
   'veer', 'pos58', 'pos-58', 'pos 58', '58mm', 'receipt', 'olivetti', 'prt80', 'xprinter',
   'zjiang', 'gprinter', 'mpt', 'mtp', 'rpp', 'pt-', 'pt2', 'zj-', 'zj', '58hb', 'innerprinter',
@@ -63,9 +62,14 @@ export class BluetoothDiscoveryService {
   private guessBrand(name: string): V1PrinterProfileBrand {
     const lower = name.toLowerCase();
     if (NON_PRINTER_KEYWORDS.some(k => lower.includes(k))) return 'UNSUPPORTED';
+    /* JOSH COMMENTED OUT
     if (JOSH_KEYWORDS.some(k => lower.includes(k))) return 'JOSH';
+    */
     if (DEV_KEYWORDS.some(k => lower.includes(k))) return 'DEV';
     if (VEER_KEYWORDS.some(k => lower.includes(k))) return 'VEER';
+    // Any Bluetooth device that passes the non-printer filter and matches
+    // generic printer keywords defaults to VEER (58mm ESC/POS receipt printer)
+    if (GENERIC_PRINTER_KEYWORDS.some(k => lower.includes(k))) return 'VEER';
     return 'UNSUPPORTED';
   }
 
