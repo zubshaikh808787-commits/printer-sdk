@@ -2,27 +2,39 @@
   "appId": "com.seznik.printermanager",
   "productName": "SEZNIK Printer Manager",
   "directories": {
-    "output": "dist-app"
+    "output": "release"
   },
   "files": [
-    "dist/**/*"
+    "dist/**/*",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "backend/src/config",
+      "to": "driver-packages",
+      "filter": ["**/*"]
+    }
   ],
   "win": {
     "target": [
       {
         "target": "nsis",
         "arch": ["x64"]
+      },
+      {
+        "target": "portable",
+        "arch": ["x64"]
       }
     ],
-    "requestedExecutionLevel": "requireAdministrator"
+    "requestedExecutionLevel": "requireAdministrator",
+    "forceCodeSigning": false
   },
   "nsis": {
-    "oneClick": true,
+    "oneClick": false,
     "perMachine": true,
-    "allowToChangeInstallationDirectory": false
-  },
-  "mac": {
-    "category": "public.app-category.utilities",
-    "target": ["dmg"]
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "SEZNIK Printer Manager"
   }
 }

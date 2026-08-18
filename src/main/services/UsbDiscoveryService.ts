@@ -21,7 +21,7 @@ export class UsbDiscoveryService {
 
   /**
    * Scans real OS USB controller and PnP entities for physically attached USB printers.
-   * NO fake or mock data! Returns empty list if no printer attached.
+   * NO fake or mock data! Returns empty list if no physical printer is attached.
    */
   async scanPhysicalUsbDevices(): Promise<DetectedUsbHardware[]> {
     if (os.platform() === 'win32') {
@@ -37,10 +37,10 @@ export class UsbDiscoveryService {
       const seenIds = new Set<string>();
 
       // ==========================================
-      // PHASE 1: Physical USB PnP Bus Scan (Fast Targeted PnP Query)
-      // Detects printers that register as usbprint/usbser service devices
+      // Physical USB PnP Bus Scan (Targeted Present-Only Query)
+      // Only returns hardware that is physically attached and present right now
       // ==========================================
-      const psPnpCommand = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.Class -eq 'Printer' -or $_.InstanceId -like '*USBPRINT*' -or $_.InstanceId -like '*VID_3533*' -or $_.InstanceId -like '*VID_0416*' -or $_.InstanceId -like '*POS58*' -or $_.Service -eq 'usbprint' -or $_.FriendlyName -like '*LD0801*' -or $_.FriendlyName -like '*DP27*' } | Select-Object FriendlyName, Name, Caption, InstanceId, PNPDeviceID, Class, PNPClass, Service | ConvertTo-Json"`;
+      const psPnpCommand = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { ($_.Status -eq 'OK' -or $_.Status -eq 'Degraded') -and ($_.Class -eq 'Printer' -or $_.PNPClass -eq 'Printer' -or $_.InstanceId -like '*USBPRINT*' -or $_.InstanceId -like '*VID_3533*' -or $_.InstanceId -like '*VID_4B43*' -or $_.InstanceId -like '*VID_0416*' -or $_.InstanceId -like '*VID_0483*' -or $_.InstanceId -like '*VID_0FE6*' -or $_.InstanceId -like '*VID_6845*' -or $_.InstanceId -like '*VID_1A86*' -or $_.Service -eq 'usbprint' -or $_.FriendlyName -like '*POS58*' -or $_.FriendlyName -like '*LD0801*' -or $_.FriendlyName -like '*DP27*' -or $_.FriendlyName -like '*Thermal*') } | Select-Object FriendlyName, Name, Caption, InstanceId, PNPDeviceID, Class, PNPClass, Service | ConvertTo-Json"`;
       
       const { stdout: pnpStdout } = await execPromise(psPnpCommand, { maxBuffer: 10 * 1024 * 1024 });
       if (pnpStdout && pnpStdout.trim() !== '') {
@@ -55,7 +55,7 @@ export class UsbDiscoveryService {
             const service = String(item.Service || '').toLowerCase();
             const lowerName = name.toLowerCase();
 
-            // Ignore internal motherboard system infra, webcams, bluetooth, audio, hid mouse/keyboard
+            // Ignore internal motherboard system devices, webcams, bluetooth, audio, hid mouse/keyboard
             if (
               lowerName.includes('host controller') ||
               lowerName.includes('root hub') ||
@@ -109,9 +109,9 @@ export class UsbDiscoveryService {
               lowerName.includes('xprinter') ||
               lowerName.includes('zjiang') ||
               lowerName.includes('gprinter') ||
-              lowerName.includes('tsc') ||
               lowerName.includes('dothantech') ||
-              lowerName.includes('dtpweb');
+              lowerName.includes('dtpweb') ||
+              lowerName.includes('thermal');
 
             if (isPrinterHardware) {
               const vidMatch = pnpId.match(/VID_([0-9A-F]{4})/i);
@@ -138,110 +138,7 @@ export class UsbDiscoveryService {
         }
       }
 
-      // If physical PnP hardware is detected on USB bus, return it immediately to prevent old spooler queues from overriding it!
-      const physicalPnpDevices = detected.filter(d => d.pnpDeviceId.startsWith('USB\\') || d.pnpDeviceId.startsWith('USBPRINT\\'));
-      if (physicalPnpDevices.length > 0) {
-        logger.info(`[UsbDiscoveryService] Phase 1 detected ${physicalPnpDevices.length} physical PnP USB hardware device(s) on USB bus.`);
-        return physicalPnpDevices;
-      }
-
-      // ==========================================
-      // PHASE 2: Active USB Printer Port Detection (Fallback)
-      // ==========================================
-      try {
-        // Get all printer ports with their descriptions
-        const psPortsCommand = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-PrinterPort -ErrorAction SilentlyContinue | Select-Object Name, Description, PortMonitor | ConvertTo-Json"`;
-        const { stdout: portsStdout } = await execPromise(psPortsCommand);
-        
-        // Get all printer queues
-        const psPrinterCommand = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-CimInstance Win32_Printer -ErrorAction SilentlyContinue | Select-Object Name, DriverName, PortName, PrinterStatus | ConvertTo-Json"`;
-        const { stdout: printerStdout } = await execPromise(psPrinterCommand);
-
-        if (portsStdout && printerStdout) {
-          const parsedPorts = JSON.parse(portsStdout || '[]');
-          const portList: any[] = Array.isArray(parsedPorts) ? parsedPorts : [parsedPorts];
-
-          const parsedPrinters = JSON.parse(printerStdout || '[]');
-          const printerList: any[] = Array.isArray(parsedPrinters) ? parsedPrinters : [parsedPrinters];
-
-          // Build a set of active USB printer port names (USB001, USB002, CP001, etc.)
-          const activeUsbPorts = new Set<string>();
-          for (const port of portList) {
-            const portName = String(port.Name || '').toUpperCase();
-            const portDesc = String(port.Description || '').toLowerCase();
-            const portMonitor = String(port.PortMonitor || '').toLowerCase();
-
-            // Active USB printer ports have descriptions like "USBPort", "DeTong DP27 Label Printer", "OLIVETTIPRT80"
-            // or port monitors like "Common Port", "Dynamic Print Monitor"
-            const isUsbPrinterPort = (
-              portName.startsWith('USB') ||
-              portName.startsWith('CP') ||
-              portDesc.includes('usbport') ||
-              portDesc.includes('detong') ||
-              portDesc.includes('dp27') ||
-              portDesc.includes('pos') ||
-              portDesc.includes('label') ||
-              portDesc.includes('olivetti') ||
-              portDesc.includes('thermal') ||
-              portMonitor.includes('dynamic print') ||
-              portMonitor.includes('common port')
-            );
-
-            // Exclude standard system ports (COM1-6, LPT1-3, FILE, nul, PORTPROMPT)
-            const isSystemPort = (
-              portName.startsWith('COM') ||
-              portName.startsWith('LPT') ||
-              portName === 'FILE:' ||
-              portName === 'NUL:' ||
-              portName === 'PORTPROMPT:'
-            );
-
-            if (isUsbPrinterPort && !isSystemPort) {
-              activeUsbPorts.add(portName);
-              logger.info(`[UsbDiscoveryService] Active USB printer port found: ${portName} (${port.Description || 'USB'})`);
-            }
-          }
-
-          // Match printer queues to active USB ports
-          for (const prt of printerList) {
-            const pName = String(prt.Name || '').trim();
-            const driverName = String(prt.DriverName || '').trim();
-            const portName = String(prt.PortName || '').toUpperCase();
-            const lowerPName = pName.toLowerCase();
-
-            // Ignore software printers
-            if (
-              lowerPName.includes('pdf') ||
-              lowerPName.includes('xps') ||
-              lowerPName.includes('fax') ||
-              lowerPName.includes('onenote')
-            ) continue;
-
-            // Must be on an active USB printer port
-            if (!activeUsbPorts.has(portName)) continue;
-
-            // Build a unique key for this printer
-            const uniqueKey = `PORT_${portName}_${pName.toUpperCase()}`;
-            if (seenIds.has(uniqueKey)) continue;
-            seenIds.add(uniqueKey);
-
-            detected.push({
-              name: pName,
-              vendorId: null,
-              productId: null,
-              pnpDeviceId: uniqueKey,
-              service: driverName,
-              isPrinterClass: true,
-            });
-
-            logger.info(`[UsbDiscoveryService] Detected USB printer via port: "${pName}" (Driver: ${driverName}, Port: ${portName})`);
-          }
-        }
-      } catch (e: any) {
-        logger.warn(`[UsbDiscoveryService] Phase 2 port scan error: ${e.message}`);
-      }
-
-      logger.info(`[UsbDiscoveryService] Total USB printer(s) detected: ${detected.length}`);
+      logger.info(`[UsbDiscoveryService] Physical USB printer(s) present: ${detected.length}`);
       return detected;
     } catch (err: any) {
       logger.error(`Error in scanWindowsUsbDevices: ${err.message}`);
@@ -309,7 +206,7 @@ export class UsbDiscoveryService {
       } finally {
         this.isScanning = false;
       }
-    }, 5000);
+    }, 4000);
   }
 
   stopHotplugMonitoring(): void {

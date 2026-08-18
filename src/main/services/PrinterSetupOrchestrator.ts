@@ -72,23 +72,9 @@ export class PrinterSetupOrchestrator {
       let devices = await this.usbDiscovery.scanPhysicalUsbDevices();
 
       if (devices.length === 0) {
-        logger.info('[V1 Pipeline] No active PnP devices found in phase 1. Checking Windows Spooler for configured printers...');
-        const driverCheck = await this.driverManager.checkDriverInstalled('JOSH');
-        if (driverCheck.installed) {
-          logger.info(`[V1 Pipeline] Found configured printer queue "${driverCheck.queueName}" in Windows Spooler.`);
-          devices.push({
-            name: driverCheck.queueName || 'LD0801 Label Printer',
-            vendorId: '0x3533',
-            productId: '0x5A11',
-            pnpDeviceId: 'USB\\VID_3533&PID_5A11\\001',
-            service: 'usbprint',
-            isPrinterClass: true,
-          });
-        } else {
-          logger.warn('[V1 Pipeline] No physical USB printer hardware or installed spooler queue detected.');
-          this.isSetupRunning = false;
-          return this.stateService.resetState();
-        }
+        logger.info('[V1 Pipeline] No physical USB thermal printer detected on USB bus.');
+        this.isSetupRunning = false;
+        return this.stateService.resetState();
       }
 
       logger.info(`[V1 Pipeline] Scanned ${devices.length} physical USB device(s):`);
@@ -285,18 +271,26 @@ export class PrinterSetupOrchestrator {
     }
   }
 
+  private lastConnectedPnpId: string | null = null;
+
   /**
-   * Initializes USB monitoring to detect insertion / unplugging dynamically.
+   * Initializes USB monitoring to detect insertion / unplugging / device swap dynamically.
    */
   startUsbMonitoring() {
     this.usbDiscovery.startHotplugMonitoring((devices) => {
       if (devices.length === 0) {
-        logger.warn('[Orchestrator] USB Printer unplugged. Updating status to DISCONNECTED.');
-        this.stateService.resetState();
+        if (this.lastConnectedPnpId !== null || this.getState().usbConnected) {
+          logger.warn('[Orchestrator] Physical USB Printer disconnected. Resetting state to NO_USB_CONNECTED.');
+          this.lastConnectedPnpId = null;
+          this.isSetupRunning = false;
+          this.stateService.resetState();
+        }
       } else {
-        const currentStep = this.getState().step;
-        if (currentStep === 'NO_USB_CONNECTED' || currentStep === 'ERROR') {
-          logger.info('[Orchestrator] USB Printer re-connected. Re-triggering automated V1 pipeline...');
+        const primaryDevice = devices[0];
+        if (primaryDevice.pnpDeviceId !== this.lastConnectedPnpId || !this.getState().usbConnected) {
+          logger.info(`[Orchestrator] Physical USB Device state change (Previous: ${this.lastConnectedPnpId} -> Current: ${primaryDevice.pnpDeviceId}). Running automated setup pipeline...`);
+          this.lastConnectedPnpId = primaryDevice.pnpDeviceId;
+          this.isSetupRunning = false;
           this.runAutomatedV1Pipeline();
         }
       }

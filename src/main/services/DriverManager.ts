@@ -92,13 +92,16 @@ export class DriverManager {
   }
 
   private async installJoshDriverPackage(): Promise<{ success: boolean; log: string }> {
+    const resourcesPath = (process as any).resourcesPath || process.cwd();
     const candidates = [
-      'C:\\Users\\omen\\OneDrive\\Desktop\\josh-files\\Win Driver Driver JOSH Label Printer.exe',
-      'C:\\Users\\omen\\OneDrive\\Desktop\\josh-files\\DTPWeb-Inst-2.1.2022.1230.exe',
+      path.join(resourcesPath, 'driver-packages/josh-files/Win Driver Driver JOSH Label Printer.exe'),
+      path.join(resourcesPath, 'driver-packages/josh-files/DTPWeb-Inst-2.1.2022.1230.exe'),
       path.resolve(process.cwd(), 'backend/src/config/josh-files/Win Driver Driver JOSH Label Printer.exe'),
       path.resolve(process.cwd(), 'backend/src/config/josh-files/DTPWeb-Inst-2.1.2022.1230.exe'),
       path.resolve(__dirname, '../../../backend/src/config/josh-files/Win Driver Driver JOSH Label Printer.exe'),
       path.resolve(__dirname, '../../../backend/src/config/josh-files/DTPWeb-Inst-2.1.2022.1230.exe'),
+      'C:\\Users\\omen\\OneDrive\\Desktop\\josh-files\\Win Driver Driver JOSH Label Printer.exe',
+      'C:\\Users\\omen\\OneDrive\\Desktop\\josh-files\\DTPWeb-Inst-2.1.2022.1230.exe',
       'C:\\Users\\omen\\Downloads\\DTPWeb-Inst-2.6.2026.0101.exe',
     ];
 
@@ -132,13 +135,13 @@ export class DriverManager {
   }
 
   private async installVeerDriverPackage(): Promise<{ success: boolean; log: string }> {
+    const resourcesPath = (process as any).resourcesPath || process.cwd();
     const candidates = [
-      'C:\\Users\\omen\\OneDrive\\Desktop\\VEER Thermal printer files\\POS58Setup_20210916.exe',
-      'C:\\Users\\omen\\Downloads\\VEER Thermal printer files\\POS58Setup_20210916.exe',
-      'C:\\Users\\omen\\Downloads\\VEER Thermal printer files\\Â■┤╬┐¬Àó╬─ÁÁ-ðíã▒\\58Setupðíã▒Ã²Â».exe',
-      'C:\\Users\\omen\\Downloads\\VEER Thermal printer files\\Â■┤╬┐¬Àó╬─ÁÁ-ðíã▒\\POS58Setup_20190329.exe',
+      path.join(resourcesPath, 'driver-packages/veer-files/POS58Setup_20210916.exe'),
       path.resolve(process.cwd(), 'backend/src/config/veer-files/POS58Setup_20210916.exe'),
       path.resolve(__dirname, '../../../backend/src/config/veer-files/POS58Setup_20210916.exe'),
+      'C:\\Users\\omen\\OneDrive\\Desktop\\VEER Thermal printer files\\POS58Setup_20210916.exe',
+      'C:\\Users\\omen\\Downloads\\VEER Thermal printer files\\POS58Setup_20210916.exe',
       'C:\\Users\\omen\\Downloads\\POS58Setup_20210916.exe',
     ];
 
@@ -234,12 +237,15 @@ export class DriverManager {
   }
 
   private async installDevDriverPackage(): Promise<{ success: boolean; log: string }> {
+    const resourcesPath = (process as any).resourcesPath || process.cwd();
     const candidates = [
-      'C:\\Users\\omen\\Downloads\\DEV- Folder\\Dev Windows Driver.exe',
-      'C:\\Users\\omen\\Downloads\\DEV- Folder\\DEV Receipt Driver POS58Setup.exe',
+      path.join(resourcesPath, 'driver-packages/dev-files/Dev Windows Driver.exe'),
+      path.join(resourcesPath, 'driver-packages/dev-files/DEV Receipt Driver POS58Setup.exe'),
       path.resolve(process.cwd(), 'backend/src/config/dev-files/Dev Windows Driver.exe'),
       path.resolve(process.cwd(), 'backend/src/config/dev-files/DEV Receipt Driver POS58Setup.exe'),
       path.resolve(__dirname, '../../../backend/src/config/dev-files/Dev Windows Driver.exe'),
+      'C:\\Users\\omen\\Downloads\\DEV- Folder\\Dev Windows Driver.exe',
+      'C:\\Users\\omen\\Downloads\\DEV- Folder\\DEV Receipt Driver POS58Setup.exe',
       'C:\\Users\\omen\\Downloads\\Dev Windows Driver.exe',
       'C:\\Users\\omen\\Downloads\\DEV Receipt Driver POS58Setup.exe',
     ];

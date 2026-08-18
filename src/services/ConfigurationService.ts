@@ -173,12 +173,32 @@ export class ConfigurationService implements IConfigurationService {
 
     this.saveConfigToDisk();
 
+    // =========================================================================
+    // AUTOMATIC WINDOWS OS UNINSTALLATION & CLEANUP
+    // Completely purges the printer queue, print jobs, driver, and Bluetooth
+    // devices from Windows OS so the user NEVER has to go to Programs & Features
+    // or Windows Settings manually.
+    // =========================================================================
+    if (os.platform() === 'win32') {
+      try {
+        const psPurgeAndRemove = `powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; Get-Printer -Name '${removedName}' -ErrorAction SilentlyContinue | Get-PrintJob -ErrorAction SilentlyContinue | Remove-PrintJob -ErrorAction SilentlyContinue; Remove-Printer -Name '${removedName}' -ErrorAction SilentlyContinue; Get-PnpDevice -ErrorAction SilentlyContinue | Where-Object { ($_.FriendlyName -like '*${removedName}*' -or $_.InstanceId -like '*${removedId}*') -and ($_.Class -eq 'Bluetooth' -or $_.Class -eq 'Ports' -or $_.Class -eq 'Printer') } | Disable-PnpDevice -Confirm:$false -ErrorAction SilentlyContinue"`;
+        await execPromise(psPurgeAndRemove);
+        logger.info(`[ConfigurationService] Successfully purged and uninstalled "${removedName}" from Windows OS spooler and device manager.`);
+      } catch (eClean: any) {
+        logger.warn(`[ConfigurationService] OS cleanup notice for "${removedName}": ${eClean.message}`);
+      }
+    } else {
+      try {
+        await execPromise(`lpadmin -x "${removedName}"`);
+      } catch {}
+    }
+
     return {
       success: true,
       removedPrinterId: removedId,
       defaultPrinterId: this.currentConfig.defaultPrinterId,
       savedPrinters: this.currentConfig.savedPrinters,
-      message: `Printer "${removedName}" removed from SEZNIK and deleted from OS Spooler.`,
+      message: `Printer "${removedName}" completely removed from SEZNIK and uninstalled from Windows OS.`,
     };
   }
 

@@ -5,7 +5,11 @@ node_modules/
 dist/
 dist-app/
 build/
+release/
 *.tsbuildinfo
+CP001
+LD0801*
+
 
 # Environment files
 .env
