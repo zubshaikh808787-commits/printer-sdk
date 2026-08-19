@@ -143,14 +143,16 @@ export class DtpWebService {
 
       const targetName = printerName || targetDevice.printerName || targetDevice.name || 'LD0801 Label Printer';
       
-      // Enforce Type 9 (Windows Spooler Mode) with Windows Printer Queue Name
-      deviceToOpen.type = 9;
-      deviceToOpen.name = targetName;
-      deviceToOpen.printerName = targetName;
-      deviceToOpen.driver = 'DP27 Label Printer';
-      deviceToOpen.devicePort = 'USB001';
+      // If printer is Bluetooth (Type 5), keep Type 5 and macAddress; otherwise for USB enforce Type 9
+      if (targetDevice.type !== 5) {
+        deviceToOpen.type = 9;
+        deviceToOpen.name = targetName;
+        deviceToOpen.printerName = targetName;
+        deviceToOpen.driver = 'DP27 Label Printer';
+        deviceToOpen.devicePort = 'USB001';
+      }
 
-      logger.info(`[JOSH-AUTO-3] Target Printer Device Object -> Name: "${deviceToOpen.name}", Queue: "${targetName}"`);
+      logger.info(`[JOSH-AUTO-3] Target Device Object -> Name: "${deviceToOpen.name}", Type: ${deviceToOpen.type}, MAC: "${deviceToOpen.macAddress || 'N/A'}"`);
 
       const opened = await this.api.openPrinter(deviceToOpen);
       if (!opened) {
@@ -181,8 +183,8 @@ export class DtpWebService {
       await this.api.startPage();
 
       // Draw 50mm x 50mm text and barcode 12345678 using vendor API with Arial font
-      await this.api.drawText({ text: 'SEZNIK JOSH 50x50mm', x: 4, y: 4, fontHeight: 3.5, fontName: 'Arial' });
-      await this.api.draw1DBarcode({ text: '12345678', x: 4, y: 12, width: 42, height: 25, textHeight: 4, fontName: 'Arial' });
+      await this.api.drawText({ text: 'print test 4', x: 14, y: 5, width: 30, height: 8, fontHeight: 4, fontName: 'Arial' });
+      await this.api.draw1DBarcode({ text: '12345678', x: 6, y: 14, width: 38, height: 22, textHeight: 4, fontName: 'Arial' });
 
       // Finalize page frame
       await this.api.endPage();

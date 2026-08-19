@@ -41,7 +41,7 @@ export class UsbDiscoveryService {
       // Only returns hardware that is physically attached and present right now
       const psPnpCommand = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -like 'USB*' -or $_.InstanceId -like 'USBPRINT*' -or $_.Class -eq 'Printer' -or $_.PNPClass -eq 'Printer' -or $_.Class -eq 'Ports' -or $_.PNPClass -eq 'Ports' -or $_.FriendlyName -like '*POS*' -or $_.FriendlyName -like '*58*' -or $_.FriendlyName -like '*Printer*' -or $_.FriendlyName -like '*Receipt*' } | Select-Object FriendlyName, Name, Caption, InstanceId, PNPDeviceID, Class, PNPClass, Service, Status | ConvertTo-Json"`;
       
-      const { stdout: pnpStdout } = await execPromise(psPnpCommand, { maxBuffer: 10 * 1024 * 1024 });
+      const { stdout: pnpStdout } = await execPromise(psPnpCommand, { maxBuffer: 10 * 1024 * 1024, timeout: 8000 });
       if (pnpStdout && pnpStdout.trim() !== '') {
         try {
           const parsed = JSON.parse(pnpStdout);
@@ -132,7 +132,11 @@ export class UsbDiscoveryService {
         }
       }
 
-      logger.info(`[UsbDiscoveryService] Physical USB printer(s) present: ${detected.length}`);
+      // Only log when device count changes to prevent log corruption in terminal
+      if ((this as any)._lastLoggedCount !== detected.length) {
+        (this as any)._lastLoggedCount = detected.length;
+        logger.info(`[UsbDiscoveryService] Physical USB printer(s) present: ${detected.length}`);
+      }
       return detected;
     } catch (err: any) {
       logger.error(`Error in scanWindowsUsbDevices: ${err.message}`);

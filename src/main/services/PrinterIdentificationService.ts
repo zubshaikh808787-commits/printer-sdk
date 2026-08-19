@@ -10,12 +10,12 @@ import logger from '../logger';
  * DEV  = Dual mode 80mm Printer (SZ-80D)
  */
 const VID_PID_BRAND_MAP: Record<string, V1PrinterProfileBrand> = {
-  // JOSH (DP27 / 50x50mm Thermal Label Printer) - COMMENTED OUT
-  // '4B43:2D37': 'JOSH',
-  // '4B43': 'JOSH',
-  // '2D37': 'JOSH',
-  // '3533:5A11': 'JOSH',
-  // '3533': 'JOSH',
+  // JOSH (DP27 / 50x50mm Thermal Label Printer)
+  '4B43:2D37': 'JOSH',
+  '4B43': 'JOSH',
+  '2D37': 'JOSH',
+  '3533:5A11': 'JOSH',
+  '3533': 'JOSH',
 
   // VEER (58mm Thermal Receipt Printer)
   '0483': 'VEER',       // STMicroelectronics (Most common POS58 microcontroller)
@@ -55,70 +55,7 @@ export class PrinterIdentificationService {
     logger.info(`[PrinterIdentificationService] Analyzing USB hardware: "${device.name}" [PnP: ${device.pnpDeviceId}] [Service/Driver: ${device.service}]`);
 
     // =============================================
-    // STRATEGY 1: Explicit Keyword Matching
-    // =============================================
-
-    // Check JOSH (Commented Out)
-    /*
-    const isJosh = 
-      combined.includes('dp27') ||
-      combined.includes('josh') ||
-      combined.includes('ld0801') ||
-      combined.includes('detong') ||
-      combined.includes('dtpweb') ||
-      combined.includes('tspl') ||
-      combined.includes('sticker') ||
-      combined.includes('4b43') ||
-      combined.includes('2d37') ||
-      combined.includes('3533');
-
-    if (isJosh) {
-      logger.info(`[PrinterIdentificationService] Keyword match → [JOSH] (50x50mm Label Printer)`);
-      return 'JOSH';
-    }
-    */
-
-    // Check VEER (58mm Thermal Receipt Printer) - PRIMARY TARGET
-    const isVeer = 
-      combined.includes('pos58') ||
-      combined.includes('pos-58') ||
-      combined.includes('pos 58') ||
-      combined.includes('veer') ||
-      combined.includes('58mm') ||
-      combined.includes('58') ||
-      combined.includes('receipt') ||
-      combined.includes('olivetti') ||
-      combined.includes('prt80') ||
-      combined.includes('xprinter') ||
-      combined.includes('zjiang') ||
-      combined.includes('gprinter') ||
-      combined.includes('yxwl') ||
-      combined.includes('printer') ||
-      combined.includes('usbprint') ||
-      combined.includes('usbser') ||
-      combined.includes('thermal');
-
-    if (isVeer) {
-      logger.info(`[PrinterIdentificationService] Keyword match → [VEER] (58mm Receipt Printer)`);
-      return 'VEER';
-    }
-
-    // Check DEV (Combo / Dual mode 80mm Printer)
-    const isDev = 
-      combined.includes('sz-80d') ||
-      combined.includes('dev-58') ||
-      combined.includes('dev-80') ||
-      combined.includes('pos80') ||
-      combined.includes('pos-80') ||
-      (combined.includes('dev') && !combined.includes('device') && !combined.includes('developer'));
-
-    if (isDev) {
-      logger.info(`[PrinterIdentificationService] Keyword match → [DEV] (80mm Dual Mode)`);
-      return 'DEV';
-    }
-
-    // =============================================
-    // STRATEGY 2: Physical Silicon VID / PID Hardware Lookup
+    // STRATEGY 1: Physical Silicon VID / PID Hardware Lookup (Highest Accuracy)
     // =============================================
     const vidMatch = pnp.match(/vid_([0-9a-f]{4})/i);
     const pidMatch = pnp.match(/pid_([0-9a-f]{4})/i);
@@ -142,9 +79,66 @@ export class PrinterIdentificationService {
     }
 
     // =============================================
-    // STRATEGY 3: Generic Thermal Receipt Fallback
+    // STRATEGY 2: Explicit Keyword Matching
     // =============================================
-    logger.info(`[PrinterIdentificationService] Defaulting connected USB printer hardware to [VEER] (58mm Receipt Printer)`);
-    return 'VEER';
+
+    // Check JOSH (DP27 / LD0801 / 50x50mm Thermal Label Printer)
+    const isJosh = 
+      combined.includes('dp27') ||
+      combined.includes('josh') ||
+      combined.includes('ld0801') ||
+      combined.includes('detong') ||
+      combined.includes('dtpweb') ||
+      combined.includes('tspl') ||
+      combined.includes('sticker') ||
+      combined.includes('label') ||
+      combined.includes('4b43') ||
+      combined.includes('2d37') ||
+      combined.includes('3533') ||
+      combined.includes('5a11');
+
+    if (isJosh) {
+      logger.info(`[PrinterIdentificationService] Keyword match → [JOSH] (50x50mm Label Printer)`);
+      return 'JOSH';
+    }
+
+    // Check DEV (Combo / Dual mode 80mm Printer)
+    const isDev = 
+      combined.includes('sz-80d') ||
+      combined.includes('dev-58') ||
+      combined.includes('dev-80') ||
+      combined.includes('pos80') ||
+      combined.includes('pos-80') ||
+      (combined.includes('dev') && !combined.includes('device') && !combined.includes('developer'));
+
+    if (isDev) {
+      logger.info(`[PrinterIdentificationService] Keyword match → [DEV] (80mm Dual Mode)`);
+      return 'DEV';
+    }
+
+    // Check VEER keywords (specific 58mm POS keywords only)
+    const isVeer = 
+      combined.includes('pos58') ||
+      combined.includes('pos-58') ||
+      combined.includes('pos 58') ||
+      combined.includes('veer') ||
+      combined.includes('58mm') ||
+      combined.includes('olivetti') ||
+      combined.includes('prt80') ||
+      combined.includes('xprinter') ||
+      combined.includes('zjiang') ||
+      combined.includes('gprinter') ||
+      combined.includes('yxwl');
+
+    if (isVeer) {
+      logger.info(`[PrinterIdentificationService] Keyword match → [VEER] (58mm Receipt Printer)`);
+      return 'VEER';
+    }
+
+    // =============================================
+    // STRATEGY 3: Generic USB Thermal Printer Default (JOSH Label Printer)
+    // =============================================
+    logger.info(`[PrinterIdentificationService] Defaulting connected USB printer hardware to [JOSH] (50x50mm Label Printer)`);
+    return 'JOSH';
   }
 }

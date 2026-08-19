@@ -26,15 +26,28 @@ export function registerIpcHandlers(
   orchestrator: PrinterSetupOrchestrator,
   bluetoothService: BluetoothPrinterService
 ) {
-  // Window Handlers
-  ipcMain.on('window:minimize', () => mainWindow.minimize());
-  ipcMain.on('window:maximize', () => {
-    if (mainWindow.isMaximized()) mainWindow.unmaximize();
-    else mainWindow.maximize();
-  });
-  ipcMain.on('window:close', () => mainWindow.close());
+  // Helper to safely register/overwrite handlers without throwing on reload
+  const safeHandle = (channel: string, listener: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => any) => {
+    ipcMain.removeHandler(channel);
+    ipcMain.handle(channel, listener);
+  };
 
-  ipcMain.handle('system:getInfo', async () => {
+  // Window Handlers
+  ipcMain.removeAllListeners('window:minimize');
+  ipcMain.on('window:minimize', () => { if (!mainWindow.isDestroyed()) mainWindow.minimize(); });
+
+  ipcMain.removeAllListeners('window:maximize');
+  ipcMain.on('window:maximize', () => {
+    if (!mainWindow.isDestroyed()) {
+      if (mainWindow.isMaximized()) mainWindow.unmaximize();
+      else mainWindow.maximize();
+    }
+  });
+
+  ipcMain.removeAllListeners('window:close');
+  ipcMain.on('window:close', () => { if (!mainWindow.isDestroyed()) mainWindow.close(); });
+
+  safeHandle('system:getInfo', async () => {
     return {
       platform: os.platform(),
       arch: os.arch(),
@@ -100,6 +113,12 @@ export function registerIpcHandlers(
     return res;
   });
 
+  ipcMain.handle('bluetooth:openSettings', async () => {
+    const { shell } = require('electron');
+    await shell.openExternal('ms-settings:bluetooth');
+    return true;
+  });
+
   // On-demand hardware reachability check — works for any saved Bluetooth
   // printer (pass its COM port), not only the one currently selected in
   // SEZNIK, so Settings can answer "is it really connected?" without first
@@ -119,10 +138,15 @@ export function registerIpcHandlers(
   ipcMain.handle('bluetooth:printUploadFile', async (_event, kind: UploadPrintKind) => {
     logger.info(`IPC invoked: bluetooth:printUploadFile [${kind}]`);
     const state = bluetoothService.getState();
-    if (!state.connectedQueueName) {
-      return { success: false, message: 'Connect a Bluetooth printer first.' };
-    }
-    const res = await fileTestPrintService.pickAndPrint(kind, state.connectedQueueName, mainWindow);
+    const targetQueue = state.connectedQueueName || state.connectedComPort || 'LD0801-Y603727493';
+    const res = await fileTestPrintService.pickAndPrint(
+      kind,
+      targetQueue,
+      mainWindow,
+      state.connectedMacAddress || undefined,
+      state.connectedComPort || undefined,
+      state.connectedBrand || 'JOSH'
+    );
     await loggingService.logAction('BLUETOOTH_UPLOAD_PRINT', res.message, res.success ? 'INFO' : 'WARN');
     return res;
   });

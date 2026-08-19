@@ -9,6 +9,7 @@ release/
 *.tsbuildinfo
 CP001
 LD0801*
+scratch/
 
 
 # Environment files

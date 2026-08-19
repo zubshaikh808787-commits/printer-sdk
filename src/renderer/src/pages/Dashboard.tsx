@@ -94,16 +94,18 @@ export const Dashboard: React.FC = () => {
   const activeStepIndex = getUsbStepIndex(v1State.step);
 
   const handleRunTestPrint = async () => {
-    setStatusMessage('Printing test receipt...');
+    const isJosh = v1State.brand === 'JOSH' || savedPrinters.some(p => p.printerType === 'LABEL');
+    setStatusMessage(isJosh ? 'Printing test label...' : 'Printing test receipt...');
     const res = await triggerV1TestPrint();
-    setStatusMessage(res?.success ? 'Test receipt sent to printer ✓' : (res?.message || 'Test print attempted.'));
+    setStatusMessage(res?.success ? (isJosh ? 'Test label sent to printer ✓' : 'Test receipt sent to printer ✓') : (res?.message || 'Test print attempted.'));
     setTimeout(() => setStatusMessage(null), 4000);
   };
 
   const handleRunBtTestPrint = async () => {
-    setStatusMessage('Printing Bluetooth test receipt...');
+    const isJosh = bluetoothState.connectedBrand === 'JOSH';
+    setStatusMessage(isJosh ? 'Printing Bluetooth test label...' : 'Printing Bluetooth test receipt...');
     await triggerBluetoothTestPrint();
-    setStatusMessage('Wireless test receipt sent ✓');
+    setStatusMessage(isJosh ? 'Wireless test label sent ✓' : 'Wireless test receipt sent ✓');
     setTimeout(() => setStatusMessage(null), 4000);
   };
 
@@ -216,8 +218,8 @@ export const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* STEP PROGRESS — only show when USB connected or setup ran */}
-        {(isUsbConnected || isSetupComplete || isSetupError) && (
+        {/* STEP PROGRESS — only show when USB is actually physically connected or actively setting up */}
+        {(isUsbConnected && (isSetupComplete || isSetupRunning)) || isSetupError ? (
           <div className="px-5 pb-4">
             {/* 4-step progress bar */}
             <div className="flex items-center gap-1 mb-3">
@@ -273,10 +275,8 @@ export const Dashboard: React.FC = () => {
               {v1State.stepMessage}
             </div>
           </div>
-        )}
-
-        {/* Not connected idle state */}
-        {!isUsbConnected && !isSetupComplete && !isSetupError && !isSetupRunning && (
+        ) : (
+          /* Not connected idle state */
           <div className="px-5 pb-5">
             <div className="p-4 rounded-xl border border-dashed border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/30 text-center space-y-2">
               <Usb className="w-8 h-8 text-slate-300 dark:text-slate-600 mx-auto" />
@@ -357,7 +357,7 @@ export const Dashboard: React.FC = () => {
           </div>
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold">
-              {savedPrinters.length || osPrinters.length} printer{(savedPrinters.length || osPrinters.length) !== 1 ? 's' : ''}
+              {savedPrinters.length} printer{savedPrinters.length !== 1 ? 's' : ''}
             </span>
             <button
               onClick={async () => { await fetchOsPrinters(); await fetchSavedPrinters(); }}
@@ -369,22 +369,34 @@ export const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        {savedPrinters.length > 0 || osPrinters.length > 0 ? (
+        {savedPrinters.length > 0 ? (
           <div className="grid grid-cols-1 gap-2.5">
-            {(savedPrinters.length > 0 ? savedPrinters : osPrinters).map((prt: any) => {
+            {savedPrinters.map((prt: any) => {
               const prtId = prt.id || prt.name;
               const isDefault = prt.isDefault || defaultPrinterId === prtId;
               const isBt = prt.connectionType === 'BLUETOOTH';
 
+              // Real physical connectivity check:
+              // USB printer is connected ONLY when v1State.usbConnected is true
+              // Bluetooth printer is connected ONLY when bluetoothState has active connected queue
+              const isCurrentlyConnected = isBt
+                ? (isBtConnected && bluetoothState.connectedQueueName === prt.name)
+                : (isUsbConnected && (v1State.queueName === prt.name || isSetupComplete || prt.name.toLowerCase().includes('pos58')));
+
               return (
                 <div
                   key={prtId}
-                  className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors"
+                  className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors ${
+                    isCurrentlyConnected
+                      ? 'border-emerald-200 dark:border-emerald-800/40 bg-emerald-50/40 dark:bg-emerald-950/20'
+                      : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 opacity-80'
+                  }`}
                 >
                   <div className="flex items-center gap-3">
                     <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm shadow-xs ${
-                      isBt ? 'bg-indigo-100 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400' :
-                      'bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200'
+                      isCurrentlyConnected
+                        ? (isBt ? 'bg-indigo-500 text-white' : 'bg-emerald-500 text-white')
+                        : 'bg-slate-200 dark:bg-slate-700 text-slate-400'
                     }`}>
                       {isBt ? <Bluetooth className="w-4 h-4" /> : <Printer className="w-4 h-4" />}
                     </div>
@@ -401,21 +413,41 @@ export const Dashboard: React.FC = () => {
                             Bluetooth
                           </span>
                         )}
+                        {isCurrentlyConnected ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Connected
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span> Disconnected (Unplugged)
+                          </span>
+                        )}
                       </div>
                       <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                        Port: {prt.portName || 'USB001'} | Status: Ready
+                        Port: {prt.portName || 'USB001'} | {isCurrentlyConnected ? 'Ready for printing' : 'Connect cable to use'}
                       </p>
                     </div>
                   </div>
 
                   <div className="flex items-center gap-2 self-end sm:self-center">
-                    <button
-                      onClick={isBt ? handleRunBtTestPrint : handleRunTestPrint}
-                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-xs transition-all flex items-center gap-1.5"
-                    >
-                      <FileText className="w-3.5 h-3.5" />
-                      Test Print
-                    </button>
+                    {isCurrentlyConnected ? (
+                      <button
+                        onClick={isBt ? handleRunBtTestPrint : handleRunTestPrint}
+                        className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-xs transition-all flex items-center gap-1.5"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        Test Print
+                      </button>
+                    ) : (
+                      <button
+                        disabled
+                        className="px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-400 dark:text-slate-500 font-bold text-xs cursor-not-allowed flex items-center gap-1.5"
+                        title="Connect printer via USB cable to enable test printing"
+                      >
+                        <Usb className="w-3.5 h-3.5" />
+                        Unplugged
+                      </button>
+                    )}
 
                     {!isDefault && (
                       <button
@@ -443,9 +475,9 @@ export const Dashboard: React.FC = () => {
             <div className="w-10 h-10 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400 flex items-center justify-center mx-auto">
               <Printer className="w-5 h-5" />
             </div>
-            <h4 className="text-sm font-black text-slate-800 dark:text-white">No printers configured yet</h4>
+            <h4 className="text-sm font-black text-slate-800 dark:text-white">No printers connected yet</h4>
             <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
-              Connect a VEER USB printer or pair via Bluetooth — setup runs automatically.
+              Connect your VEER USB printer or pair via Bluetooth — detection and setup will run automatically.
             </p>
           </div>
         )}

@@ -99,6 +99,7 @@ export const usePrinterStore = create<PrinterStoreState>((set, get) => ({
     stepMessage: 'Bluetooth printer not connected yet.',
     devices: [],
     isScanning: false,
+    adapterStatus: 'UNKNOWN',
     connectedDeviceId: null,
     connectedDeviceName: null,
     connectedComPort: null,
@@ -425,7 +426,8 @@ export const usePrinterStore = create<PrinterStoreState>((set, get) => ({
   },
 
   triggerTestPrint: async (type) => {
-    const targetName = get().v1State.queueName || get().savedPrinters[0]?.name;
+    const targetSaved = get().savedPrinters.find(p => p.id === get().defaultPrinterId) || get().savedPrinters[0];
+    const targetName = get().v1State.queueName || targetSaved?.name;
     if (!targetName) {
       const fallback: JoshTestPrintResult = {
         success: false,
@@ -438,8 +440,10 @@ export const usePrinterStore = create<PrinterStoreState>((set, get) => ({
       set({ lastDiagnosticResult: fallback });
       return fallback;
     }
+    const isJosh = get().v1State.brand === 'JOSH' || targetSaved?.printerType === 'LABEL' || targetName.toLowerCase().includes('dp27') || targetName.toLowerCase().includes('josh') || targetName.toLowerCase().includes('ld0801') || targetName.toLowerCase().includes('detong');
+    const effectiveType = type || (isJosh ? 'LABEL' : 'RECEIPT');
     if (window.seznikApi) {
-      const res = await window.seznikApi.printRawEscPos(targetName, type);
+      const res = await window.seznikApi.printRawEscPos(targetName, effectiveType);
       set({ lastDiagnosticResult: res });
       return res;
     }

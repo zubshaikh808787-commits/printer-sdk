@@ -113,23 +113,11 @@ export class PrinterSetupOrchestrator {
         progressPercent: 25,
       });
 
-      const brand = this.identification.identifyHardware(targetHardware);
+      let brand = this.identification.identifyHardware(targetHardware);
 
-      if (brand === 'UNSUPPORTED') {
-        logger.warn(`[V1 Pipeline] Connected hardware "${targetHardware.name}" is unsupported.`);
-        this.isSetupRunning = false;
-        return this.stateService.updateState({
-          step: 'UNSUPPORTED_PRINTER',
-          stepMessage: 'USB printer detected — unsupported model.',
-          progressPercent: 25,
-          usbConnected: true,
-          detectedHardwareName: targetHardware.name,
-          brand: 'UNSUPPORTED',
-          queueName: null,
-          driverInstalled: false,
-          isDefault: false,
-          testPrintSuccess: false,
-        });
+      // JOSH active pipeline (defaulting thermal USB hardware to JOSH)
+      if (brand === 'UNSUPPORTED' || brand === 'VEER') {
+        brand = 'JOSH';
       }
 
       const profile = this.profileService.getProfile(brand);
@@ -203,7 +191,7 @@ export class PrinterSetupOrchestrator {
       if (!queueName || invalidPnpNames.includes(queueName.trim().toLowerCase())) {
         queueName = targetHardware.name && !invalidPnpNames.includes(targetHardware.name.trim().toLowerCase()) 
           ? targetHardware.name 
-          : (brand === 'VEER' ? 'POS58 Printer' : 'SZ-80D Printer');
+          : (brand === 'JOSH' ? 'DeTong DP27 Label Printer' : 'SZ-80D Printer');
       }
 
       this.stateService.updateState({
@@ -233,6 +221,7 @@ export class PrinterSetupOrchestrator {
       const detectedPort = activeLivePort || 'USB001';
 
       const savedPrinterId = `seznik-${queueName.replace(/\s+/g, '-').toLowerCase()}`;
+      const printerType = brand === 'JOSH' ? 'LABEL' : (brand === 'DEV' ? 'RECEIPT_AND_LABEL' : 'RECEIPT');
       await this.appConfig.savePrinter({
         id: savedPrinterId,
         name: queueName,
@@ -240,7 +229,7 @@ export class PrinterSetupOrchestrator {
         portName: detectedPort,
         connectionType: 'USB',
         isDefault: true,
-        printerType: brand === 'VEER' ? 'RECEIPT' : 'RECEIPT_AND_LABEL',
+        printerType,
       });
 
       // Step 6: Set Default
@@ -323,19 +312,41 @@ export class PrinterSetupOrchestrator {
     let brand = currentState.brand;
 
     if (!queueName || queueName.trim() === '' || queueName.toLowerCase() === 'none') {
-      const driverCheckVeer = await this.driverManager.checkDriverInstalled('VEER');
-      
-      if (driverCheckVeer.installed) {
-        queueName = driverCheckVeer.queueName || 'POS58 Printer';
-        brand = 'VEER';
+      const savedPrinters = await this.appConfig.getSavedPrinters();
+      const defaultId = await this.appConfig.getDefaultPrinterId();
+      const targetSaved = savedPrinters.find(p => p.id === defaultId) || savedPrinters[0];
+
+      if (targetSaved) {
+        queueName = targetSaved.name;
+        const isJosh = targetSaved.printerType === 'LABEL' || targetSaved.name.toLowerCase().includes('dp27') || targetSaved.name.toLowerCase().includes('josh') || targetSaved.name.toLowerCase().includes('ld0801') || targetSaved.name.toLowerCase().includes('detong');
+        const isDev = targetSaved.printerType === 'RECEIPT_AND_LABEL';
+        brand = isJosh ? 'JOSH' : (isDev ? 'DEV' : 'JOSH');
       } else {
-        queueName = 'POS58 Printer';
-        brand = 'VEER';
+        const driverCheckJosh = await this.driverManager.checkDriverInstalled('JOSH');
+        /* VEER fallback commented out
+        const driverCheckVeer = await this.driverManager.checkDriverInstalled('VEER');
+        */
+
+        if (driverCheckJosh.installed) {
+          queueName = driverCheckJosh.queueName || 'DeTong DP27 Label Printer';
+          brand = 'JOSH';
+        /*
+        } else if (driverCheckVeer.installed) {
+          queueName = driverCheckVeer.queueName || 'POS58 Printer';
+          brand = 'VEER';
+        } else {
+          queueName = 'POS58 Printer';
+          brand = 'VEER';
+        */
+        } else {
+          queueName = 'DeTong DP27 Label Printer';
+          brand = 'JOSH';
+        }
       }
     }
 
-    if (!brand || brand === 'UNSUPPORTED') {
-      brand = 'VEER';
+    if (!brand || brand === 'UNSUPPORTED' || brand === 'VEER') {
+      brand = 'JOSH';
     }
 
     logger.info(`[PrinterSetupOrchestrator] Manual test print invoked for target queue "${queueName}" [Brand: ${brand}]`);

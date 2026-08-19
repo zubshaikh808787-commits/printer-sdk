@@ -43,6 +43,7 @@ const seznikApi: SeznikApiBridge = {
   forgetBluetoothDevice: (deviceId: string) => ipcRenderer.invoke('bluetooth:forget', deviceId),
   printBluetoothUploadFile: (kind) => ipcRenderer.invoke('bluetooth:printUploadFile', kind),
   checkBluetoothConnection: (comPort) => ipcRenderer.invoke('bluetooth:checkConnection', comPort),
+  openBluetoothSettings: () => ipcRenderer.invoke('bluetooth:openSettings'),
 
   // Official DothanTech DtpWeb Print Assistant API Bridge
   checkDtpWebPlugin: () => ipcRenderer.invoke('dtpweb:checkPlugin'),

@@ -1,16 +1,16 @@
 import { exec } from 'child_process';
 import util from 'util';
 import os from 'os';
+import path from 'path';
+import fs from 'fs';
 import logger from '../logger';
-import { BluetoothPairedDevice, V1PrinterProfileBrand } from '../../shared/types';
+import { BluetoothAdapterStatus, BluetoothPairedDevice, V1PrinterProfileBrand } from '../../shared/types';
 
 const execPromise = util.promisify(exec);
 
 // Brand-specific keyword sets, mirroring PrinterIdentificationService's USB
 // heuristics. All thermal Bluetooth printers default to VEER (58mm ESC/POS).
-/* JOSH COMMENTED OUT
 const JOSH_KEYWORDS = ['josh', 'dp27', 'ld0801', 'detong', 'dtpweb', 'tspl', 'sticker', 'label', 'dothantech'];
-*/
 const VEER_KEYWORDS = [
   'veer', 'pos58', 'pos-58', 'pos 58', '58mm', 'receipt', 'olivetti', 'prt80', 'xprinter',
   'zjiang', 'gprinter', 'mpt', 'mtp', 'rpp', 'pt-', 'pt2', 'zj-', 'zj', '58hb', 'innerprinter',
@@ -32,10 +32,9 @@ const NON_PRINTER_KEYWORDS = [
   'monitor', 'controller', 'gamepad', 'buds', 'car', 'audio',
 ];
 
-interface RawPnpEntry {
-  FriendlyName?: string;
-  InstanceId?: string;
-  Status?: string;
+export interface BluetoothDiscoveryResult {
+  adapterStatus: BluetoothAdapterStatus;
+  devices: BluetoothPairedDevice[];
 }
 
 export class BluetoothDiscoveryService {
@@ -62,9 +61,7 @@ export class BluetoothDiscoveryService {
   private guessBrand(name: string): V1PrinterProfileBrand {
     const lower = name.toLowerCase();
     if (NON_PRINTER_KEYWORDS.some(k => lower.includes(k))) return 'UNSUPPORTED';
-    /* JOSH COMMENTED OUT
     if (JOSH_KEYWORDS.some(k => lower.includes(k))) return 'JOSH';
-    */
     if (DEV_KEYWORDS.some(k => lower.includes(k))) return 'DEV';
     if (VEER_KEYWORDS.some(k => lower.includes(k))) return 'VEER';
     // Any Bluetooth device that passes the non-printer filter and matches
@@ -80,152 +77,124 @@ export class BluetoothDiscoveryService {
     return GENERIC_PRINTER_KEYWORDS.some(k => lower.includes(k));
   }
 
-  /**
-   * Lists paired Bluetooth devices (both Classic "Bluetooth" class and
-   * "BTHLEDevice" class — Windows sometimes buckets a printer's parent
-   * device under either depending on how it advertised during pairing).
-   */
-  private async scanPairedBluetoothDevices(): Promise<RawPnpEntry[]> {
-    const psCmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $a = Get-PnpDevice -Class Bluetooth -PresentOnly -ErrorAction SilentlyContinue; $b = Get-PnpDevice -Class BTHLEDevice -PresentOnly -ErrorAction SilentlyContinue; @($a; $b) | Where-Object { $_.InstanceId -notlike 'BTH\\\\MS_BTHPAN*' } | Select-Object FriendlyName, InstanceId, Status | ConvertTo-Json"`;
-
-    try {
-      const { stdout } = await execPromise(psCmd, { maxBuffer: 10 * 1024 * 1024 });
-      if (!stdout || stdout.trim() === '') return [];
-      const parsed = JSON.parse(stdout);
-      return Array.isArray(parsed) ? parsed : [parsed];
-    } catch (err: any) {
-      logger.warn(`[BluetoothDiscoveryService] Paired device scan notice: ${err.message}`);
-      return [];
+  private resolveScriptPath(filename: string): string {
+    const candidates = [
+      path.join(__dirname, '..', 'scripts', filename),
+      path.join(__dirname, '..', '..', 'src', 'main', 'scripts', filename),
+      path.resolve(process.cwd(), 'src', 'main', 'scripts', filename),
+    ];
+    for (const p of candidates) {
+      if (fs.existsSync(p)) return p;
     }
+    return candidates[0]; // fallback
   }
-
-  /**
-   * Lists Windows "Ports" class devices that are Bluetooth Serial Port
-   * Profile bindings — these are the actual COM ports we can write raw
-   * ESC/POS bytes to (e.g. "Standard Serial over Bluetooth link (COM5)").
-   *
-   * Broadened filter: any Ports-class device whose InstanceId starts with
-   * BTHENUM is a Bluetooth SPP port regardless of what its FriendlyName says.
-   */
-  private async scanBluetoothComPorts(): Promise<RawPnpEntry[]> {
-    // Fetch ALL Ports-class devices — we filter in JS to catch every variant.
-    const psCmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-PnpDevice -Class Ports -PresentOnly -ErrorAction SilentlyContinue | Select-Object FriendlyName, InstanceId, Status | ConvertTo-Json"`;
-
-    try {
-      const { stdout } = await execPromise(psCmd, { maxBuffer: 10 * 1024 * 1024 });
-      if (!stdout || stdout.trim() === '') return [];
-      const parsed = JSON.parse(stdout);
-      const all: RawPnpEntry[] = Array.isArray(parsed) ? parsed : [parsed];
-      // Keep only Bluetooth SPP entries: InstanceId starts with BTHENUM,
-      // or FriendlyName contains "Bluetooth" (covers renamed/localised drivers).
-      return all.filter(p => {
-        const id = (p.InstanceId || '').toUpperCase();
-        const name = (p.FriendlyName || '').toLowerCase();
-        return id.startsWith('BTHENUM') || name.includes('bluetooth');
-      });
-    } catch (err: any) {
-      logger.warn(`[BluetoothDiscoveryService] Bluetooth COM port scan notice: ${err.message}`);
-      return [];
-    }
-  }
-
 
   /**
    * Returns every paired Bluetooth device, with its bound SPP COM port
    * resolved where Windows has one (correlated by shared MAC address).
    * Devices are sorted with likely-printer matches first.
+   * Also returns Bluetooth adapter status for the UI to distinguish
+   * "no adapter" from "adapter off" from "no devices found".
    */
-  async getPairedDevices(): Promise<BluetoothPairedDevice[]> {
+  async getPairedDevices(): Promise<BluetoothDiscoveryResult> {
     if (os.platform() !== 'win32') {
-      logger.warn('[BluetoothDiscoveryService] Bluetooth SPP pairing is only implemented for Windows.');
-      return [];
+      logger.warn('[BT:DISCOVERY] Bluetooth SPP pairing is only implemented for Windows.');
+      return { adapterStatus: 'UNKNOWN', devices: [] };
     }
 
-    const [pairedRaw, portsRaw] = await Promise.all([
-      this.scanPairedBluetoothDevices(),
-      this.scanBluetoothComPorts(),
-    ]);
+    try {
+      const scriptPath = this.resolveScriptPath('bt_discovery.ps1');
+      const psCmd = `powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`;
+      const { stdout } = await execPromise(psCmd, { maxBuffer: 10 * 1024 * 1024, timeout: 15000 });
+      if (!stdout || stdout.trim() === '') {
+        logger.warn('[BT:DISCOVERY] bt_discovery.ps1 returned empty output.');
+        return { adapterStatus: 'UNKNOWN', devices: [] };
+      }
 
-    // Build a map of MAC address -> COM port name from the Ports class scan
-    const macToComPort = new Map<string, string>();
-    for (const p of portsRaw) {
-      const instanceId = p.InstanceId || '';
-      const friendly = p.FriendlyName || '';
-      const comMatch = friendly.match(/\(COM(\d+)\)/i);
-      if (!comMatch) continue;
-      const comPort = `COM${comMatch[1]}`;
-      const mac = this.extractMacAddress(instanceId);
-      if (mac) macToComPort.set(mac, comPort);
-    }
+      const parsed = JSON.parse(stdout.trim());
 
-    const seen = new Set<string>();
-    const devices: BluetoothPairedDevice[] = [];
+      // New envelope format: { AdapterStatus: "...", Devices: [...] }
+      const adapterStatus: BluetoothAdapterStatus = parsed.AdapterStatus || 'UNKNOWN';
+      const rawDevices: any[] = Array.isArray(parsed.Devices) ? parsed.Devices : (Array.isArray(parsed) ? parsed : []);
 
-    for (const d of pairedRaw) {
-      const name = (d.FriendlyName || '').trim();
-      if (!name) continue;
+      logger.info(`[BT:ADAPTER] Bluetooth adapter state: ${adapterStatus}`);
 
-      const lowerName = name.toLowerCase();
-      if (
-        lowerName.includes('bluetooth device (personal area network)') ||
-        lowerName.includes('bluetooth peripheral device') ||
-        lowerName === 'bluetooth radio' ||
-        lowerName.includes('generic bluetooth')
-      ) continue;
+      if (adapterStatus === 'NOT_PRESENT') {
+        logger.warn('[BT:ADAPTER] No Bluetooth adapter detected on this machine.');
+        return { adapterStatus, devices: [] };
+      }
+      if (adapterStatus === 'PRESENT_BUT_DISABLED') {
+        logger.warn('[BT:ADAPTER] Bluetooth adapter found but is disabled.');
+        return { adapterStatus, devices: [] };
+      }
 
-      const instanceId = d.InstanceId || '';
-      const mac = this.extractMacAddress(instanceId);
-      const dedupeKey = mac || instanceId || name;
-      if (seen.has(dedupeKey)) continue;
-      seen.add(dedupeKey);
+      const devices: BluetoothPairedDevice[] = rawDevices.map(item => {
+        const name = String(item.Name || '').trim();
+        const address = item.Address ? String(item.Address).toUpperCase() : null;
+        const brand = this.guessBrand(name);
+        const comPort = item.ComPort ? String(item.ComPort).toUpperCase() : null;
 
-      const comPort = mac ? macToComPort.get(mac) || null : null;
-      const brand = this.guessBrand(name);
-
-      devices.push({
-        id: mac || `bt-${name.replace(/\s+/g, '-').toLowerCase()}`,
-        name,
-        address: mac,
-        comPort,
-        isLikelyPrinter: this.isLikelyPrinter(name, brand),
-        likelyBrand: brand,
+        return {
+          id: address || `bt-${name.replace(/\s+/g, '-').toLowerCase()}`,
+          name,
+          address,
+          comPort,
+          isLikelyPrinter: this.isLikelyPrinter(name, brand),
+          likelyBrand: brand,
+        };
       });
-    }
 
-    // Also surface any Bluetooth COM port whose parent device didn't show up
-    // in the Bluetooth-class scan (some drivers only expose the Ports entry).
-    for (const p of portsRaw) {
-      const friendly = (p.FriendlyName || '').trim();
-      const instanceId = p.InstanceId || '';
-      const mac = this.extractMacAddress(instanceId);
-      if (mac && seen.has(mac)) continue;
-      const comMatch = friendly.match(/\(COM(\d+)\)/i);
-      if (!comMatch) continue;
-      const comPort = `COM${comMatch[1]}`;
-      const dedupeKey = mac || instanceId;
-      if (!dedupeKey || seen.has(dedupeKey)) continue;
-      seen.add(dedupeKey);
-
-      const portDeviceName = friendly.replace(/\s*\(COM\d+\)\s*$/i, '') || `Bluetooth Serial Device (${comPort})`;
-      const portBrand = this.guessBrand(portDeviceName);
-
-      devices.push({
-        id: mac || `bt-port-${comPort.toLowerCase()}`,
-        name: portDeviceName,
-        address: mac,
-        comPort,
-        isLikelyPrinter: this.isLikelyPrinter(portDeviceName, portBrand),
-        likelyBrand: portBrand,
+      devices.sort((a, b) => {
+        if (a.isLikelyPrinter !== b.isLikelyPrinter) return a.isLikelyPrinter ? -1 : 1;
+        if (!!a.comPort !== !!b.comPort) return a.comPort ? -1 : 1;
+        return a.name.localeCompare(b.name);
       });
+
+      logger.info(`[BT:DISCOVERY] Discovered ${devices.length} Bluetooth device(s): ${devices.map(d => `${d.name}(${d.comPort || 'no-port'})`).join(', ')}`);
+      return { adapterStatus, devices };
+    } catch (err: any) {
+      logger.error(`[BT:DISCOVERY] Discovery error: ${err.message}`);
+      return { adapterStatus: 'UNKNOWN', devices: [] };
+    }
+  }
+
+  /**
+   * Attempts to ensure a COM port exists for a paired Bluetooth device.
+   * Calls bt_ensure_com_port.ps1 which tries multiple strategies:
+   * 1. Find an existing COM port by MAC correlation
+   * 2. Walk parent devices in the registry
+   * 3. Trigger a PnP rescan to prompt Windows to create the port
+   *
+   * Returns the COM port name (e.g. "COM5") if successful, or null with
+   * an error detail if it couldn't create one.
+   */
+  async ensureComPort(macAddress: string): Promise<{ comPort: string | null; hasRfcomm: boolean; error: string | null }> {
+    if (!macAddress || os.platform() !== 'win32') {
+      return { comPort: null, hasRfcomm: false, error: 'Not on Windows or no MAC address provided.' };
     }
 
-    devices.sort((a, b) => {
-      if (a.isLikelyPrinter !== b.isLikelyPrinter) return a.isLikelyPrinter ? -1 : 1;
-      if (!!a.comPort !== !!b.comPort) return a.comPort ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
+    try {
+      const scriptPath = this.resolveScriptPath('bt_ensure_com_port.ps1');
+      const cleanMac = macAddress.replace(/[^A-Fa-f0-9]/g, '').toUpperCase();
+      const psCmd = `powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}" -MacAddress "${cleanMac}"`;
+      const { stdout } = await execPromise(psCmd, { timeout: 20000 });
+      const result = JSON.parse((stdout || '').trim());
 
-    logger.info(`[BluetoothDiscoveryService] Found ${devices.length} paired Bluetooth device(s), ${devices.filter(d => d.comPort).length} with a resolved SPP COM port.`);
-    return devices;
+      if (result.Success && result.ComPort) {
+        logger.info(`[BT:COM_PORT] Resolved COM port for ${cleanMac}: ${result.ComPort} (method: ${result.Method})`);
+        return { comPort: result.ComPort, hasRfcomm: true, error: null };
+      }
+
+      if (result.Error === 'NO_COM_PORT_BUT_RFCOMM_OK') {
+        logger.info(`[BT:COM_PORT] No COM port for ${cleanMac} but RFCOMM is available — direct transport will work.`);
+        return { comPort: null, hasRfcomm: true, error: null };
+      }
+
+      logger.warn(`[BT:COM_PORT] Could not resolve COM port for ${cleanMac}: ${result.Error} — ${result.Message}`);
+      return { comPort: null, hasRfcomm: false, error: result.Message || result.Error };
+    } catch (err: any) {
+      logger.error(`[BT:COM_PORT] ensureComPort error for ${macAddress}: ${err.message}`);
+      return { comPort: null, hasRfcomm: false, error: err.message };
+    }
   }
 }

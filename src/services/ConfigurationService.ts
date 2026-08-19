@@ -32,6 +32,73 @@ export class ConfigurationService implements IConfigurationService {
   constructor() {
     this.configFilePath = path.join(os.homedir(), '.seznik-printers.json');
     this.currentConfig = this.loadConfigFromDisk();
+    // Validate saved printers against actual OS state on every startup
+    this.validateSavedPrintersOnStartup();
+  }
+
+  /**
+   * On app startup, cross-check every saved USB printer against the real
+   * Windows Print Spooler. If a saved queue no longer exists in the OS
+   * (e.g. the EXE was copied to a different machine, or a different user
+   * is logged in), silently remove it so the dashboard starts clean.
+   */
+  private async validateSavedPrintersOnStartup(): Promise<void> {
+    if (os.platform() !== 'win32' || this.currentConfig.savedPrinters.length === 0) return;
+
+    try {
+      const psCmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-Printer -ErrorAction SilentlyContinue | Select-Object Name | ConvertTo-Json"`;
+      const { stdout } = await execPromise(psCmd);
+      const osQueueNames = new Set<string>();
+
+      if (stdout && stdout.trim() !== '') {
+        const parsed = JSON.parse(stdout);
+        const list: any[] = Array.isArray(parsed) ? parsed : [parsed];
+        list.forEach((p: any) => osQueueNames.add(String(p.Name || '').toLowerCase()));
+      }
+
+      const before = this.currentConfig.savedPrinters.length;
+      let modified = false;
+
+      this.currentConfig.savedPrinters = this.currentConfig.savedPrinters.filter(sp => {
+        // Bluetooth printers are validated differently — keep them if paired
+        if (sp.connectionType === 'BLUETOOTH') return true;
+        // USB printers: keep only if the OS spooler actually has this queue
+        const nameMatch = osQueueNames.has(sp.name.toLowerCase());
+        if (!nameMatch) {
+          logger.info(`[ConfigurationService] Pruned stale saved printer "${sp.name}" — queue not found in Windows Spooler.`);
+        }
+        return nameMatch;
+      });
+
+      // Ensure proper printerType for JOSH vs VEER printers
+      this.currentConfig.savedPrinters.forEach(p => {
+        const lower = p.name.toLowerCase();
+        if (lower.includes('dp27') || lower.includes('josh') || lower.includes('ld0801') || lower.includes('detong')) {
+          if (p.printerType !== 'LABEL') {
+            p.printerType = 'LABEL';
+            modified = true;
+          }
+        }
+      });
+
+      if (this.currentConfig.savedPrinters.length < before || modified) {
+        // Fix default pointer if it was pruned
+        const defaultStillExists = this.currentConfig.savedPrinters.find(p => p.id === this.currentConfig.defaultPrinterId);
+        if (!defaultStillExists) {
+          if (this.currentConfig.savedPrinters.length > 0) {
+            this.currentConfig.savedPrinters[0].isDefault = true;
+            this.currentConfig.defaultPrinterId = this.currentConfig.savedPrinters[0].id;
+          } else {
+            this.currentConfig.defaultPrinterId = null;
+          }
+          this.currentConfig.selectedPrinterId = this.currentConfig.defaultPrinterId;
+        }
+        this.saveConfigToDisk();
+        logger.info(`[ConfigurationService] Startup validation: updated ${this.currentConfig.savedPrinters.length} printer(s).`);
+      }
+    } catch (err: any) {
+      logger.warn(`[ConfigurationService] Startup validation notice: ${err.message}`);
+    }
   }
 
   private loadConfigFromDisk(): DeskAppConfig {

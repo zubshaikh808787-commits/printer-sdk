@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Bluetooth, RefreshCw, X, CheckCircle2, AlertTriangle, Printer, Loader2, Image as ImageIcon, FileText, AlignLeft, Receipt, Info, Tag } from 'lucide-react';
+import { Bluetooth, RefreshCw, X, CheckCircle2, AlertTriangle, Printer, Loader2, Image as ImageIcon, FileText, AlignLeft, Receipt, Info, Tag, WifiOff, Settings2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { usePrinterStore } from '../store/usePrinterStore';
 import { UploadPrintKind, UploadPrintResult, V1PrinterProfileBrand } from '@shared/types';
@@ -14,6 +14,11 @@ const UPLOAD_ACTIONS: { kind: UploadPrintKind; label: string; icon: React.Elemen
   { kind: 'PDF', label: 'Upload PDF', icon: FileText },
   { kind: 'TEXT', label: 'Upload Text', icon: AlignLeft },
 ];
+
+/** Steps that indicate a multi-stage connection is in progress. */
+const CONNECTING_STEPS = new Set([
+  'CONNECTING', 'PAIRING', 'COM_PORT_CREATING', 'DRIVER_INSTALLING', 'QUEUE_REGISTERING',
+]);
 
 export const ConnectBluetoothModal: React.FC<ConnectBluetoothModalProps> = ({ isOpen, onClose }) => {
   const {
@@ -41,7 +46,7 @@ export const ConnectBluetoothModal: React.FC<ConnectBluetoothModalProps> = ({ is
 
   if (!isOpen) return null;
 
-  const isBusy = bluetoothState.step === 'SCANNING' || bluetoothState.step === 'CONNECTING' || bluetoothState.step === 'TEST_PRINTING';
+  const isBusy = bluetoothState.step === 'SCANNING' || bluetoothState.step === 'TEST_PRINTING' || CONNECTING_STEPS.has(bluetoothState.step);
 
   const resolveBrand = (deviceId: string, likelyBrand: V1PrinterProfileBrand): V1PrinterProfileBrand => {
     if (brandOverrides[deviceId]) return brandOverrides[deviceId];
@@ -60,6 +65,18 @@ export const ConnectBluetoothModal: React.FC<ConnectBluetoothModalProps> = ({ is
     setIsCheckingConnection(true);
     await checkBluetoothConnection();
     setIsCheckingConnection(false);
+  };
+
+  /** Human-readable label for the current connection sub-step. */
+  const connectingStepLabel = (): string => {
+    switch (bluetoothState.step) {
+      case 'PAIRING': return 'Pairing...';
+      case 'COM_PORT_CREATING': return 'Resolving port...';
+      case 'DRIVER_INSTALLING': return 'Installing driver...';
+      case 'QUEUE_REGISTERING': return 'Creating queue...';
+      case 'CONNECTING': return 'Connecting...';
+      default: return 'Connecting...';
+    }
   };
 
   return (
@@ -102,31 +119,122 @@ export const ConnectBluetoothModal: React.FC<ConnectBluetoothModalProps> = ({ is
               `min-h-0` is required here: without it a flex child ignores the parent's
               max-height and keeps growing instead of triggering overflow-y-auto. */}
           <div className="p-5 space-y-4 overflow-y-auto flex-1 min-h-0">
-            {/* Instructions */}
-            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-[11px] text-slate-600 font-medium leading-relaxed">
-              Pair your printer in <strong className="text-slate-800">Windows Settings → Bluetooth & devices</strong> first if it isn't listed
-              below. Connecting here automatically installs the <strong className="text-slate-800">POS58 driver</strong>, creates a real
-              <strong className="text-slate-800"> Windows printer</strong> queue, sets it as your <strong className="text-slate-800">system default</strong>,
-              and sends a <strong className="text-slate-800">test receipt</strong> — all automatically. The printer will show up in
-              any app's Print dialog (Ctrl+P), not just SEZNIK.
+
+            {/* ── Bluetooth Adapter Status Banner ── */}
+            {(bluetoothState.adapterStatus === 'NOT_PRESENT' || bluetoothState.step === 'ADAPTER_MISSING') && (
+              <div className="p-3 bg-rose-50 rounded-xl border border-rose-200 text-xs font-semibold text-rose-900 flex items-start gap-2.5">
+                <WifiOff className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
+                <div className="flex-1">
+                  <p className="font-black text-[11px] mb-1">No Bluetooth Adapter Detected</p>
+                  <p className="text-[10.5px] text-rose-700 leading-relaxed">
+                    This computer doesn't have a Bluetooth adapter. Plug in a USB Bluetooth dongle and try again, or connect the printer via USB instead.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {(bluetoothState.adapterStatus === 'PRESENT_BUT_DISABLED' || bluetoothState.step === 'ADAPTER_OFF') && (
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs font-semibold text-amber-900 flex items-start gap-2.5">
+                <WifiOff className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
+                <div className="flex-1 space-y-2">
+                  <div>
+                    <p className="font-black text-[11px] mb-1">Bluetooth Is Turned Off</p>
+                    <p className="text-[10.5px] text-amber-700 leading-relaxed">
+                      Enable Bluetooth in Windows Settings, then rescan for devices.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => (window as any).seznikApi?.openBluetoothSettings?.()}
+                    className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition-all"
+                  >
+                    <Settings2 className="w-3 h-3" />
+                    <span>Open Bluetooth Settings</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ── NO COM PORT remediation banner ── */}
+            {bluetoothState.step === 'NO_COM_PORT' && (
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs font-semibold text-amber-900 flex items-start gap-2.5">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
+                <div className="flex-1 space-y-2">
+                  <p className="font-black text-[11px]">Serial Port Not Available</p>
+                  <p className="text-[10.5px] text-amber-700 leading-relaxed">
+                    {bluetoothState.stepMessage}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => (window as any).seznikApi?.openBluetoothSettings?.()}
+                      className="px-2.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all"
+                    >
+                      <Settings2 className="w-3 h-3" />
+                      <span>Bluetooth Settings</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => scanBluetoothDevices()}
+                      className="px-2.5 py-1.5 bg-slate-600 hover:bg-slate-700 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      <span>Rescan</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Instructions — hide when adapter banners are showing */}
+            {bluetoothState.adapterStatus !== 'NOT_PRESENT' && bluetoothState.adapterStatus !== 'PRESENT_BUT_DISABLED' && bluetoothState.step !== 'ADAPTER_MISSING' && bluetoothState.step !== 'ADAPTER_OFF' && (
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-[11px] text-slate-600 font-medium leading-relaxed">
+                Pair your printer in <strong className="text-slate-800">Windows Settings → Bluetooth & devices</strong> first if it isn't listed
+                below. Connecting here automatically installs the appropriate driver (<strong className="text-slate-800">JOSH Label / POS58 Receipt</strong>), creates a real
+                <strong className="text-slate-800"> Windows printer</strong> queue, sets it as your <strong className="text-slate-800">system default</strong>,
+                and sends an automated <strong className="text-slate-800">test print</strong> — all automatically. The printer will show up in
+                any app's Print dialog (Ctrl+P), not just SEZNIK.
+              </div>
+            )}
+
+            {/* Scan bar & Windows Settings button */}
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-bold text-slate-600 truncate">{bluetoothState.stepMessage}</span>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => (window as any).seznikApi?.openBluetoothSettings?.()}
+                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[11px] font-bold flex items-center gap-1 border border-slate-300 transition-all"
+                  title="Open Windows Bluetooth settings to pair a new device"
+                >
+                  <Bluetooth className="w-3 h-3 text-blue-600" />
+                  <span>Pair in Windows</span>
+                </button>
+                <button
+                  onClick={() => scanBluetoothDevices()}
+                  disabled={isBusy}
+                  className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all shadow-xs"
+                >
+                  <RefreshCw className={`w-3 h-3 ${bluetoothState.step === 'SCANNING' ? 'animate-spin' : ''}`} />
+                  <span>Rescan</span>
+                </button>
+              </div>
             </div>
 
-            {/* Scan bar */}
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold text-slate-600">{bluetoothState.stepMessage}</span>
-              <button
-                onClick={() => scanBluetoothDevices()}
-                disabled={isBusy}
-                className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all"
-              >
-                <RefreshCw className={`w-3 h-3 ${bluetoothState.step === 'SCANNING' ? 'animate-spin' : ''}`} />
-                <span>Rescan</span>
-              </button>
-            </div>
+            {/* ── Connection progress indicator (shown during multi-step connect) ── */}
+            {CONNECTING_STEPS.has(bluetoothState.step) && (
+              <div className="p-3 rounded-xl border bg-blue-50 border-blue-200 text-blue-900 text-xs font-semibold flex items-center gap-2.5">
+                <Loader2 className="w-4 h-4 shrink-0 animate-spin" />
+                <div className="flex-1">
+                  <p className="font-black text-[11px]">{connectingStepLabel()}</p>
+                  <p className="text-[10.5px] text-blue-700 mt-0.5">{bluetoothState.stepMessage}</p>
+                </div>
+              </div>
+            )}
 
             {/* Device list */}
             <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
-              {bluetoothState.devices.length === 0 && bluetoothState.step !== 'SCANNING' && (
+              {bluetoothState.devices.length === 0 && bluetoothState.step !== 'SCANNING' && !CONNECTING_STEPS.has(bluetoothState.step) && bluetoothState.step !== 'ADAPTER_MISSING' && bluetoothState.step !== 'ADAPTER_OFF' && (
                 <div className="p-6 text-center border border-dashed border-slate-300 rounded-lg bg-slate-50 space-y-1">
                   <Bluetooth className="w-6 h-6 text-slate-400 mx-auto" />
                   <p className="text-xs font-bold text-slate-600">No paired Bluetooth devices found.</p>
@@ -136,8 +244,8 @@ export const ConnectBluetoothModal: React.FC<ConnectBluetoothModalProps> = ({ is
 
               {bluetoothState.devices.map((device) => {
                 const isThisConnected = bluetoothState.connectedDeviceId === device.id && bluetoothState.step !== 'ERROR';
-                const isThisConnecting = isBusy && bluetoothState.connectedDeviceId === device.id;
-                const selectedBrand = isThisConnected ? (bluetoothState.connectedBrand || 'VEER') : resolveBrand(device.id, device.likelyBrand);
+                const isThisConnecting = CONNECTING_STEPS.has(bluetoothState.step) && bluetoothState.connectedDeviceId === device.id;
+                const selectedBrand = isThisConnected ? (bluetoothState.connectedBrand || device.likelyBrand || 'VEER') : resolveBrand(device.id, device.likelyBrand);
 
                 return (
                   <div
@@ -157,7 +265,7 @@ export const ConnectBluetoothModal: React.FC<ConnectBluetoothModalProps> = ({ is
                             {device.comPort ? (
                               <span className="font-mono">{device.comPort}</span>
                             ) : (
-                              <span className="text-amber-600 font-bold">No serial port bound</span>
+                              <span className="text-amber-600 font-bold">No serial port (auto-resolved on connect)</span>
                             )}
                             {device.isLikelyPrinter && <span className="ml-1.5 text-blue-600 font-bold">• Likely printer</span>}
                           </p>
@@ -178,21 +286,31 @@ export const ConnectBluetoothModal: React.FC<ConnectBluetoothModalProps> = ({ is
                       ) : (
                         <button
                           onClick={() => connectBluetoothDevice(device.id, selectedBrand)}
-                          disabled={isBusy || !device.comPort}
+                          disabled={isBusy}
                           className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-white text-[11px] font-bold shrink-0 flex items-center gap-1.5 transition-all"
                         >
                           {isThisConnecting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Bluetooth className="w-3 h-3" />}
-                          <span>Connect</span>
+                          <span>{isThisConnecting ? connectingStepLabel() : 'Connect'}</span>
                         </button>
                       )}
                     </div>
 
-                    {/* Brand auto-detected as VEER — shown as info only */}
+                    {/* Dynamic Brand/Printer Type Badge */}
                     <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center gap-2">
                       <span className="text-[9px] font-black text-slate-400 uppercase tracking-wide">Printer Type:</span>
-                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold bg-blue-600 text-white">
-                        <Receipt className="w-3 h-3" /> Receipt (VEER 58mm)
-                      </span>
+                      {selectedBrand === 'JOSH' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold bg-indigo-600 text-white">
+                          <Tag className="w-3 h-3" /> Label (JOSH 50x50mm)
+                        </span>
+                      ) : selectedBrand === 'DEV' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold bg-purple-600 text-white">
+                          <Printer className="w-3 h-3" /> Dual (DEV 80mm)
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold bg-blue-600 text-white">
+                          <Receipt className="w-3 h-3" /> Receipt (VEER 58mm)
+                        </span>
+                      )}
                     </div>
                   </div>
                 );
@@ -209,8 +327,7 @@ export const ConnectBluetoothModal: React.FC<ConnectBluetoothModalProps> = ({ is
                   </span>
                 </div>
 
-                {/* Real hardware reachability check — the actual answer to "is it really
-                    connected right now," independent of what Windows Bluetooth settings shows. */}
+                {/* Real hardware reachability check */}
                 <button
                   onClick={handleCheckConnection}
                   disabled={isCheckingConnection}
@@ -237,10 +354,12 @@ export const ConnectBluetoothModal: React.FC<ConnectBluetoothModalProps> = ({ is
                   >
                     {bluetoothState.step === 'TEST_PRINTING' ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : bluetoothState.connectedBrand === 'JOSH' ? (
+                      <Tag className="w-3.5 h-3.5 text-indigo-600" />
                     ) : (
                       <Receipt className="w-3.5 h-3.5 text-blue-600" />
                     )}
-                    <span>Test Receipt</span>
+                    <span>{bluetoothState.connectedBrand === 'JOSH' ? 'Test Label' : 'Test Receipt'}</span>
                   </button>
 
                   {UPLOAD_ACTIONS.map(({ kind, label, icon: Icon }) => (

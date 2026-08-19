@@ -34,7 +34,9 @@ export class PrinterStateService {
     logger.info(`[PrinterStateService] State Updated -> Step: [${this.state.step}] Message: "${this.state.stepMessage}"`);
 
     if (this.window && !this.window.isDestroyed()) {
-      this.window.webContents.send('event:v1StateChanged', this.state);
+      try {
+        this.window.webContents.send('event:v1StateChanged', this.state);
+      } catch (e) {}
     }
 
     return this.getState();

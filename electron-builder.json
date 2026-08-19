@@ -1,6 +1,6 @@
 {
   "appId": "com.seznik.printermanager",
-  "productName": "SEZNIK Printer Manager",
+  "productName": "SEZNIK Final Test VEER",
   "directories": {
     "output": "release"
   },
@@ -12,6 +12,16 @@
     {
       "from": "backend/src/config",
       "to": "driver-packages",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "scripts",
+      "to": "scripts",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "prisma",
+      "to": "prisma",
       "filter": ["**/*"]
     }
   ],
@@ -35,6 +45,6 @@
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
-    "shortcutName": "SEZNIK Printer Manager"
+    "shortcutName": "SEZNIK Final Test VEER"
   }
 }

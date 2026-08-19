@@ -1,18 +1,16 @@
 import { V1PrinterProfileBrand } from '../../../shared/types';
 
 export class JoshLabelCommands {
-  static createTestLabel(quantity = 1): Buffer {
+  static createTestLabel(quantity = 1, title = "print test 4", barcode = "12345678"): Buffer {
     const commands = 
       "SIZE 50 mm, 50 mm\r\n" +
       "GAP 3 mm, 0 mm\r\n" +
       "REFERENCE 0,0\r\n" +
-      "SET TEAR ON\r\n" +
       "DIRECTION 1\r\n" +
+      "SET TEAR ON\r\n" +
       "CLS\r\n" +
-      "TEXT 100,20,\"3\",0,1,1,\"SEZNIK JOSH\"\r\n" +
-      "TEXT 70,55,\"2\",0,1,1,\"50mm x 50mm TEST LABEL\"\r\n" +
-      "BARCODE 40,90,\"128\",100,1,0,2,2,\"12345678\"\r\n" +
-      "TEXT 80,210,\"2\",0,1,1,\"REAL PRINT VERIFIED\"\r\n" +
+      `TEXT 110,30,"3",0,1,1,"${title}"\r\n` +
+      `BARCODE 60,80,"128",90,1,0,2,2,"${barcode}"\r\n` +
       `PRINT ${quantity},1\r\n`;
     return Buffer.from(commands, 'ascii');
   }

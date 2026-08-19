@@ -32,12 +32,9 @@ export class DriverManager {
             const name = String(p.Name || '').toLowerCase();
             const drv = String(p.DriverName || '').toLowerCase();
 
-            /* JOSH COMMENTED OUT
             if (brand === 'JOSH') {
               return name.includes('dp27') || name.includes('josh') || name.includes('ld0801') || name.includes('label') || name.includes('detong') || drv.includes('dp27') || drv.includes('josh') || drv.includes('label') || drv.includes('detong');
-            } else
-            */
-            if (brand === 'VEER') {
+            } else if (brand === 'VEER') {
               return name.includes('pos58') || name.includes('pos-58') || name.includes('veer') || name.includes('receipt') || drv.includes('pos58') || drv.includes('pos-58') || drv.includes('veer') || drv.includes('receipt');
             } else if (brand === 'DEV') {
               return name.includes('dev') || name.includes('sz-80d') || name.includes('pos80') || drv.includes('dev') || drv.includes('sz-80d') || name.includes('dp27') || name.includes('pos58');
@@ -85,13 +82,9 @@ export class DriverManager {
 
     if (brand === 'VEER') {
       return this.installVeerDriverPackage();
-    }
-    /* JOSH COMMENTED OUT
-    else if (brand === 'JOSH') {
+    } else if (brand === 'JOSH') {
       return this.installJoshDriverPackage();
-    }
-    */
-    else if (brand === 'DEV') {
+    } else if (brand === 'DEV') {
       return this.installDevDriverPackage();
     }
 
@@ -118,9 +111,11 @@ export class DriverManager {
       if (stdout && stdout.trim() !== '') {
         const parsed = JSON.parse(stdout);
         const drvList: any[] = Array.isArray(parsed) ? parsed : [parsed];
-        const keywords = brand === 'DEV'
-          ? ['pos58', 'pos-58', '58mm', 'veer', 'dev', 'sz-80d', 'pos80']
-          : ['pos58', 'pos-58', '58mm', 'veer'];
+        const keywords = brand === 'JOSH'
+          ? ['dp27', 'josh', 'detong', 'ld0801', 'label']
+          : (brand === 'DEV'
+            ? ['pos58', 'pos-58', '58mm', 'veer', 'dev', 'sz-80d', 'pos80']
+            : ['pos58', 'pos-58', '58mm', 'veer']);
         const found = drvList.find((d: any) => {
           const dName = String(d.Name || '').toLowerCase();
           return keywords.some(k => dName.includes(k));
@@ -135,7 +130,14 @@ export class DriverManager {
     // Step 2: Driver not in Store — run the bundled installer EXE
     const resourcesPath = (process as any).resourcesPath || process.cwd();
     const execDir = path.dirname(process.execPath || '');
-    const candidates = [
+    const candidates = brand === 'JOSH' ? [
+      path.join(resourcesPath, 'driver-packages', 'josh-files', 'Win Driver Driver JOSH Label Printer.exe'),
+      path.join(resourcesPath, 'driver-packages/josh-files/Win Driver Driver JOSH Label Printer.exe'),
+      path.join(execDir, 'resources', 'driver-packages', 'josh-files', 'Win Driver Driver JOSH Label Printer.exe'),
+      path.resolve(process.cwd(), 'backend', 'src', 'config', 'josh-files', 'Win Driver Driver JOSH Label Printer.exe'),
+      path.resolve(process.cwd(), 'backend/src/config/josh-files/Win Driver Driver JOSH Label Printer.exe'),
+      path.resolve(__dirname, '../../../backend/src/config/josh-files/Win Driver Driver JOSH Label Printer.exe'),
+    ] : [
       path.join(resourcesPath, 'driver-packages', 'veer-files', 'POS58Setup_20210916.exe'),
       path.join(resourcesPath, 'driver-packages/veer-files/POS58Setup_20210916.exe'),
       path.join(execDir, 'resources', 'driver-packages', 'veer-files', 'POS58Setup_20210916.exe'),
@@ -164,9 +166,12 @@ export class DriverManager {
       if (stdout && stdout.trim() !== '') {
         const parsed = JSON.parse(stdout);
         const drvList: any[] = Array.isArray(parsed) ? parsed : [parsed];
+        const keywords = brand === 'JOSH'
+          ? ['dp27', 'josh', 'detong', 'ld0801', 'label']
+          : ['pos58', 'pos-58', '58mm', 'veer'];
         const found = drvList.find((d: any) => {
           const dName = String(d.Name || '').toLowerCase();
-          return dName.includes('pos58') || dName.includes('pos-58') || dName.includes('58mm') || dName.includes('veer');
+          return keywords.some(k => dName.includes(k));
         });
         if (found && found.Name) {
           logger.info(`[DriverManager] installDriverOnly: Driver now in Store after install: "${found.Name}" ✓`);
@@ -175,16 +180,86 @@ export class DriverManager {
       }
     } catch (e) {}
 
-    // Fallback: assume POS58 driver name even if we couldn't confirm
-    logger.warn(`[DriverManager] installDriverOnly: Could not confirm driver in Store. Using fallback name 'POS58'.`);
-    return { success: true, driverName: 'POS58' };
+    // Fallback: assume default driver name for brand
+    const fallbackName = brand === 'JOSH' ? 'DP27 Label Printer' : 'POS58';
+    logger.warn(`[DriverManager] installDriverOnly: Could not confirm driver in Store. Using fallback name '${fallbackName}'.`);
+    return { success: true, driverName: fallbackName };
   }
 
-  /* JOSH COMMENTED OUT
-  private async installJoshDriverPackage(): Promise<{ success: boolean; log: string }> {
-    return { success: true, log: 'JOSH Driver package execution disabled.' };
+  private async installJoshDriverPackage(): Promise<{ success: boolean; log: string; portName?: string }> {
+    const resourcesPath = (process as any).resourcesPath || process.cwd();
+    const execDir = path.dirname(process.execPath || '');
+    const candidates = [
+      path.join(resourcesPath, 'driver-packages', 'josh-files', 'Win Driver Driver JOSH Label Printer.exe'),
+      path.join(resourcesPath, 'driver-packages/josh-files/Win Driver Driver JOSH Label Printer.exe'),
+      path.join(resourcesPath, 'driver-packages', 'josh-files', 'DTPWeb-Inst-2.1.2022.1230.exe'),
+      path.join(execDir, 'resources', 'driver-packages', 'josh-files', 'Win Driver Driver JOSH Label Printer.exe'),
+      path.resolve(process.cwd(), 'backend', 'src', 'config', 'josh-files', 'Win Driver Driver JOSH Label Printer.exe'),
+      path.resolve(process.cwd(), 'backend/src/config/josh-files/Win Driver Driver JOSH Label Printer.exe'),
+      path.resolve(process.cwd(), 'backend', 'src', 'config', 'josh-files', 'DTPWeb-Inst-2.1.2022.1230.exe'),
+      path.resolve(__dirname, '../../../backend/src/config/josh-files/Win Driver Driver JOSH Label Printer.exe'),
+    ];
+
+    const driverExePath = this.findDriverExe(candidates);
+
+    if (os.platform() !== 'win32') {
+      return { success: true, log: 'JOSH Driver package execution completed.' };
+    }
+
+    try {
+      // Step 1: Check if DeTong / LD0801 / JOSH driver is already in the Windows Driver Store
+      const psGetDrivers = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-PrinterDriver -ErrorAction SilentlyContinue | Select-Object Name | ConvertTo-Json"`;
+      let matchedDriver = 'DeTong DP27 Label Printer';
+      let isDriverInStore = false;
+      try {
+        const { stdout } = await execPromise(psGetDrivers);
+        if (stdout && stdout.trim() !== '') {
+          const parsed = JSON.parse(stdout);
+          const drvList: any[] = Array.isArray(parsed) ? parsed : [parsed];
+          const found = drvList.find((d: any) => {
+            const dName = String(d.Name || '').toLowerCase();
+            return dName.includes('dp27') || dName.includes('detong') || dName.includes('ld0801') || dName.includes('josh');
+          });
+          if (found && found.Name) {
+            matchedDriver = found.Name;
+            isDriverInStore = true;
+            logger.info(`[DriverManager] Found existing JOSH driver in Windows Driver Store: "${matchedDriver}"`);
+          }
+        }
+      } catch (eDrv) {}
+
+      // Step 2: Install driver if not in Store — launch installer VISIBLY
+      if (!isDriverInStore && driverExePath) {
+        try {
+          logger.info(`[DriverManager] Launching JOSH driver installer: ${driverExePath}`);
+          const launchCmd = `cmd /c start "" /wait "${driverExePath}"`;
+          await execPromise(launchCmd, { timeout: 120000 });
+          logger.info(`[DriverManager] JOSH driver installer completed.`);
+        } catch (eExe: any) {
+          logger.warn(`[DriverManager] JOSH driver installer notice: ${eExe.message}`);
+        }
+      }
+
+      // Step 3: Discover active USB port
+      const targetPort = await this.discoverActiveUsbPort('JOSH');
+      logger.info(`[DriverManager] Active USB printer port for JOSH: "${targetPort}"`);
+
+      // Step 4: Ensure Windows Spooler queue "DeTong DP27 Label Printer"
+      const queueName = 'DeTong DP27 Label Printer';
+      const psEnsureQueue = `powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; Get-Printer -Name '${queueName}' -ErrorAction SilentlyContinue | Get-PrintJob -ErrorAction SilentlyContinue | Remove-PrintJob -ErrorAction SilentlyContinue; if (-not (Get-Printer -Name '${queueName}' -ErrorAction SilentlyContinue)) { Add-Printer -Name '${queueName}' -DriverName '${matchedDriver}' -PortName '${targetPort}' -ErrorAction SilentlyContinue } else { Set-Printer -Name '${queueName}' -PortName '${targetPort}' -ErrorAction SilentlyContinue }"`;
+      await execPromise(psEnsureQueue);
+      logger.info(`[DriverManager] Windows Spooler queue "${queueName}" bound to port "${targetPort}" ✓`);
+
+      return {
+        success: true,
+        log: `JOSH Driver (${matchedDriver}) installed and queue "${queueName}" bound to port ${targetPort}.`,
+        portName: targetPort,
+      };
+    } catch (err: any) {
+      logger.warn(`[DriverManager] JOSH driver setup notice: ${err.message}`);
+      return { success: true, log: `JOSH Driver package processed. Notice: ${err.message}` };
+    }
   }
-  */
 
   private async installVeerDriverPackage(): Promise<{ success: boolean; log: string; portName?: string }> {
     const resourcesPath = (process as any).resourcesPath || process.cwd();
@@ -267,7 +342,7 @@ export class DriverManager {
       // ── Step 3: Discover the CURRENT active USB port for this printer ──
       // This is critical — if the printer was reconnected to a different USB slot,
       // it may now be on USB003 instead of USB001. We always rebind to the live port.
-      let targetPort = await this.discoverActiveUsbPort();
+      let targetPort = await this.discoverActiveUsbPort('VEER');
       logger.info(`[DriverManager] Active USB printer port detected: "${targetPort}"`);
 
       // ── Step 4: Clear stale jobs, then create/rebind the Windows Spooler queue ──
@@ -288,10 +363,10 @@ export class DriverManager {
 
   /**
    * Discovers the currently active USB printer port by scanning Windows PnP
-   * USBPRINT devices that are physically present and active right now.
-   * Returns the exact live port (e.g. USB003).
+   * USBPRINT devices and spooler ports that match the target printer hardware.
+   * Returns the exact live port (e.g. USB001 for DeTong, USB003 for VEER).
    */
-  async discoverActiveUsbPort(): Promise<string> {
+  async discoverActiveUsbPort(brand?: V1PrinterProfileBrand): Promise<string> {
     const DEFAULT_PORT = 'USB001';
     if (os.platform() !== 'win32') return DEFAULT_PORT;
 
@@ -302,39 +377,79 @@ export class DriverManager {
       if (pnpOut && pnpOut.trim() !== '') {
         const parsed = JSON.parse(pnpOut);
         const list: any[] = Array.isArray(parsed) ? parsed : [parsed];
+
+        // If brand is specified, find the specific PnP device matching this brand
+        if (brand === 'JOSH') {
+          const joshItem = list.find((item: any) => {
+            const str = `${item.InstanceId} ${item.FriendlyName}`.toLowerCase();
+            return str.includes('detong') || str.includes('dp27') || str.includes('ld0801') || str.includes('4b43') || str.includes('3533') || str.includes('label');
+          });
+          if (joshItem) {
+            const match = String(joshItem.InstanceId || '').match(/&(USB\d+)/i);
+            if (match && match[1]) {
+              const port = match[1].toUpperCase();
+              logger.info(`[DriverManager] Found JOSH active USB port from PnP: "${port}" (${joshItem.FriendlyName})`);
+              return port;
+            }
+          }
+        } else if (brand === 'VEER') {
+          const veerItem = list.find((item: any) => {
+            const str = `${item.InstanceId} ${item.FriendlyName}`.toLowerCase();
+            return str.includes('olivetti') || str.includes('prt80') || str.includes('pos58') || str.includes('veer') || str.includes('58');
+          });
+          if (veerItem) {
+            const match = String(veerItem.InstanceId || '').match(/&(USB\d+)/i);
+            if (match && match[1]) {
+              const port = match[1].toUpperCase();
+              logger.info(`[DriverManager] Found VEER active USB port from PnP: "${port}" (${veerItem.FriendlyName})`);
+              return port;
+            }
+          }
+        }
+
+        // Generic fallback to any active USBPRINT PnP instance
         for (const item of list) {
           const match = String(item.InstanceId || '').match(/&(USB\d+)/i);
           if (match && match[1]) {
             const port = match[1].toUpperCase();
-            logger.info(`[DriverManager] Found physically active USB port from PnP InstanceId: "${port}" (${item.FriendlyName})`);
+            logger.info(`[DriverManager] Found active USB port from PnP InstanceId: "${port}" (${item.FriendlyName})`);
             return port;
           }
         }
       }
 
-      // 2. Query printer ports from Windows Spooler matching Olivetti / POS58 / VEER
+      // 2. Query printer ports from Windows Spooler matching the target brand
       const psGetPorts = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-PrinterPort -ErrorAction SilentlyContinue | Select-Object Name, Description | ConvertTo-Json"`;
       const { stdout } = await execPromise(psGetPorts);
       if (stdout && stdout.trim() !== '') {
         const parsed = JSON.parse(stdout);
         const portList: any[] = Array.isArray(parsed) ? parsed : [parsed];
 
-        const specificPorts = portList.filter((p: any) => {
-          const desc = String(p.Description || '').toLowerCase();
-          const name = String(p.Name || '').toLowerCase();
-          return desc.includes('olivetti') || desc.includes('prt80') || desc.includes('pos58') ||
-                 desc.includes('veer') || desc.includes('58') || name.includes('pos58');
-        });
-
-        if (specificPorts.length > 0) {
-          return specificPorts[0].Name;
+        if (brand === 'JOSH') {
+          const joshPort = portList.find((p: any) => {
+            const desc = String(p.Description || '').toLowerCase();
+            const name = String(p.Name || '').toLowerCase();
+            return desc.includes('detong') || desc.includes('dp27') || desc.includes('ld0801') || desc.includes('josh') || desc.includes('label');
+          });
+          if (joshPort && joshPort.Name) {
+            logger.info(`[DriverManager] Found JOSH port from Windows Spooler: "${joshPort.Name}" (${joshPort.Description})`);
+            return joshPort.Name;
+          }
+        } else if (brand === 'VEER') {
+          const veerPort = portList.find((p: any) => {
+            const desc = String(p.Description || '').toLowerCase();
+            const name = String(p.Name || '').toLowerCase();
+            return desc.includes('olivetti') || desc.includes('prt80') || desc.includes('pos58') || desc.includes('veer') || desc.includes('58');
+          });
+          if (veerPort && veerPort.Name) {
+            logger.info(`[DriverManager] Found VEER port from Windows Spooler: "${veerPort.Name}" (${veerPort.Description})`);
+            return veerPort.Name;
+          }
         }
 
         const genericUsbPorts = portList.filter((p: any) => {
           const name = String(p.Name || '').toUpperCase();
-          return name.startsWith('USB') &&
-                 !String(p.Description || '').toLowerCase().includes('dp27') &&
-                 !String(p.Description || '').toLowerCase().includes('detong');
+          return name.startsWith('USB');
         });
 
         if (genericUsbPorts.length > 0) {

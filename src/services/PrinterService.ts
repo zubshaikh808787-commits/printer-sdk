@@ -22,6 +22,7 @@ import { PrintValidator } from './PrintValidator';
 import { UsbDiscoveryService } from '../main/services/UsbDiscoveryService';
 import { PrinterIdentificationService } from '../main/services/PrinterIdentificationService';
 import { JoshPrintPipeline } from '../main/services/JoshPrintPipeline';
+import { TestPrintService } from '../main/services/TestPrintService';
 import { UsbTransportFactory } from '../main/services/transport/UsbPrinterTransport';
 import { PrinterCommandGenerator } from '../main/services/commands/PrinterCommandGenerator';
 
@@ -487,7 +488,13 @@ export class PrinterService implements IPrinterService {
 
   async performTestPrint(printerId: string, printType: 'RECEIPT' | 'LABEL'): Promise<JoshTestPrintResult> {
     const printer = this.registeredPrinters.get(printerId);
-    return this.performRawTestPrint(printer?.name || 'DP27 Label Printer', printType, 1);
+    const targetName = printer?.name || printerId;
+    const isLabel = printType === 'LABEL' || targetName.toLowerCase().includes('dp27') || targetName.toLowerCase().includes('josh') || targetName.toLowerCase().includes('ld0801') || targetName.toLowerCase().includes('detong');
+    if (isLabel) {
+      const testPrintService = new TestPrintService();
+      return await testPrintService.printJoshLabel(targetName);
+    }
+    return this.performRawTestPrint(targetName, printType, 1);
   }
 
   async calibratePrinter(targetPrinterName: string): Promise<{ success: boolean; message: string }> {
@@ -530,12 +537,18 @@ export class PrinterService implements IPrinterService {
       
       const targetLower = (targetPrinterName || '').toLowerCase();
       const isTargetVeer = targetLower.includes('pos58') || targetLower.includes('pos-58') || targetLower.includes('veer') || targetLower.includes('receipt');
-      const isLabelRequest = printType === 'LABEL';
+      const isLabelRequest = printType === 'LABEL' || targetLower.includes('dp27') || targetLower.includes('josh') || targetLower.includes('ld0801') || targetLower.includes('detong');
 
       // Only divert to JoshPrintPipeline if it's a TSPL label request AND target is NOT a VEER receipt printer
       if (isLabelRequest && !isTargetVeer) {
         const joshPipeline = new JoshPrintPipeline();
-        return await joshPipeline.executeJoshPipeline(targetPrinterName);
+        const pipelineRes = await joshPipeline.executeJoshPipeline(targetPrinterName);
+        if (pipelineRes.success) {
+          return pipelineRes;
+        }
+        logger.warn(`[PrinterService] JoshPrintPipeline notice: ${pipelineRes.message}. Falling back to TestPrintService...`);
+        const testPrintService = new TestPrintService();
+        return await testPrintService.printJoshLabel(targetPrinterName);
       }
 
       let matchedName = targetPrinterName;

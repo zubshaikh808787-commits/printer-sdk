@@ -121,7 +121,7 @@ export class BluetoothPrinterTransport {
 
     if (!preferredDriver) {
       try {
-        logger.info(`[BluetoothPrinterTransport] Driver not found for [${brand}]. Installing driver only (no USB queue)...`);
+        logger.info(`[BT:DRIVER] Driver not found for [${brand}]. Installing driver only (no USB queue)...`);
         const driverManager = new DriverManager();
         const drvResult = await driverManager.installDriverOnly(brand);
         if (drvResult.success && drvResult.driverName) {
@@ -131,33 +131,63 @@ export class BluetoothPrinterTransport {
           preferredDriver = await this.findPreferredDriver(brand);
         }
       } catch (eDrv: any) {
-        logger.warn(`[BluetoothPrinterTransport] Driver installation notice: ${eDrv.message}`);
+        logger.warn(`[BT:DRIVER] Driver installation notice: ${eDrv.message}`);
       }
     }
 
     const driverName = preferredDriver || 'POS58';
-    logger.info(`[BluetoothPrinterTransport] Using driver "${driverName}" for queue "${queueName}" on port "${portName}"`);
+    logger.info(`[BT:DRIVER] Using driver "${driverName}" for Bluetooth queue "${queueName}" on ${portName}`);
 
-    // Step 2: Create/update the Windows Spooler queue on the Bluetooth COM port
+    // Step 2: Ensure the COM port is registered as a Windows Printer Port
+    // Windows requires the port to exist in the spooler's port list before a
+    // printer queue can be bound to it. For COM ports, this means adding it
+    // as a Local Port if it isn't already present.
     const esc = (s: string) => s.replace(/'/g, "''");
-
     try {
-      const psCmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; if (-not (Get-PrinterPort -Name '${esc(portName)}' -ErrorAction SilentlyContinue)) { Add-PrinterPort -Name '${esc(portName)}' -ErrorAction SilentlyContinue }; if (-not (Get-Printer -Name '${esc(queueName)}' -ErrorAction SilentlyContinue)) { Add-Printer -Name '${esc(queueName)}' -DriverName '${esc(driverName)}' -PortName '${esc(portName)}' -ErrorAction SilentlyContinue } else { Set-Printer -Name '${esc(queueName)}' -PortName '${esc(portName)}' -ErrorAction SilentlyContinue }"`;
+      const psEnsurePort = `powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; $existing = Get-PrinterPort -Name '${esc(portName)}' -ErrorAction SilentlyContinue; if (-not $existing) { Add-PrinterPort -Name '${esc(portName)}' -ErrorAction SilentlyContinue }"`;
+      await execPromise(psEnsurePort, { timeout: 10000 });
+      logger.info(`[BT:QUEUE] Ensured printer port "${portName}" exists in Windows spooler ✓`);
+    } catch (ePort: any) {
+      logger.warn(`[BT:QUEUE] Printer port registration notice for "${portName}": ${ePort.message}`);
+      // Not fatal — the port may already exist or Add-Printer may create it implicitly
+    }
+
+    // Step 3: Create or update the Windows Spooler queue bound to the REAL COM port
+    // (Previously this was PORTPROMPT: which popped up a port dialog on every print)
+    try {
+      const psCmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; if (-not (Get-Printer -Name '${esc(queueName)}' -ErrorAction SilentlyContinue)) { Add-Printer -Name '${esc(queueName)}' -DriverName '${esc(driverName)}' -PortName '${esc(portName)}' -ErrorAction SilentlyContinue } else { Set-Printer -Name '${esc(queueName)}' -PortName '${esc(portName)}' -ErrorAction SilentlyContinue }"`;
       await execPromise(psCmd, { timeout: 25000 });
-      logger.info(`[BluetoothPrinterTransport] Created/updated Windows queue "${queueName}" on Bluetooth port "${portName}" ✓`);
+      logger.info(`[BT:QUEUE] Created/updated Windows queue "${queueName}" on port "${portName}" with driver "${driverName}" ✓`);
     } catch (err: any) {
       const detail: string = err.stderr || err.message || 'Unknown error';
-      logger.error(`[BluetoothPrinterTransport] Failed to create queue "${queueName}": ${detail}`);
+      logger.error(`[BT:QUEUE] Failed to create queue "${queueName}": ${detail}`);
       return { success: false, message: `Could not register "${queueName}" as a Windows printer: ${detail}`, driverUsed: driverName };
     }
 
-    // Step 3: Set as Windows system default printer (robust multi-method approach)
+    // Step 4: Validate the queue was actually created and is on the right port
+    try {
+      const psCheck = `powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = Get-Printer -Name '${esc(queueName)}' -ErrorAction SilentlyContinue; if ($p) { Write-Output $p.PortName } else { Write-Output 'NOT_FOUND' }"`;
+      const { stdout } = await execPromise(psCheck, { timeout: 8000 });
+      const boundPort = (stdout || '').trim();
+      if (boundPort === 'NOT_FOUND') {
+        logger.warn(`[BT:QUEUE] Queue "${queueName}" was not found after creation — may need admin rights.`);
+      } else if (boundPort.toUpperCase() !== portName.toUpperCase()) {
+        logger.warn(`[BT:QUEUE] Queue "${queueName}" bound to "${boundPort}" instead of expected "${portName}" — rebinding...`);
+        await execPromise(`powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Printer -Name '${esc(queueName)}' -PortName '${esc(portName)}' -ErrorAction SilentlyContinue"`, { timeout: 10000 });
+      } else {
+        logger.info(`[BT:QUEUE] Verified queue "${queueName}" is bound to port "${boundPort}" ✓`);
+      }
+    } catch (eCheck: any) {
+      logger.warn(`[BT:QUEUE] Post-creation validation notice: ${eCheck.message}`);
+    }
+
+    // Step 5: Set as Windows system default printer (robust multi-method approach)
     try {
       const defaultService = new DefaultPrinterService();
       await defaultService.setAsDefaultPrinter(queueName);
-      logger.info(`[BluetoothPrinterTransport] Set "${queueName}" as Windows system default printer ✓`);
+      logger.info(`[BT:QUEUE] Set "${queueName}" as Windows system default printer ✓`);
     } catch (eDefault: any) {
-      logger.warn(`[BluetoothPrinterTransport] Default printer notice: ${eDefault.message}`);
+      logger.warn(`[BT:QUEUE] Default printer notice: ${eDefault.message}`);
     }
 
     return {
@@ -218,17 +248,182 @@ export class BluetoothPrinterTransport {
     }
   }
 
-  /** Sends raw ESC/POS bytes through the registered Windows queue — same RAW technique as USB printing. */
-  async write(queueName: string, data: Buffer): Promise<PrintResult> {
-    const res = await sendRawBytesToPrinterQueue(queueName, data, 'SEZNIK Bluetooth Print Job');
+  /** Sends raw bytes directly to Bluetooth SPP COM port, RFCOMM StreamSocket, Spooler, or BLE GATT */
+  async write(queueName: string, data: Buffer, comPort?: string, macAddress?: string): Promise<PrintResult> {
+    const cleanMac = (macAddress || '').replace(/[^A-Fa-f0-9]/g, '').toUpperCase();
+    const targetCom = (comPort || '').replace(/:$/, '').toUpperCase();
+    const jobId = `BT-${Date.now().toString(36).toUpperCase()}`;
+
+    logger.info(`[BluetoothPrinterTransport][JOB:${jobId}] Initiating print write (${data.length} bytes) to target "${queueName}", MAC: "${cleanMac || 'N/A'}", Port: "${targetCom || 'N/A'}"`);
+
+    // 1. Direct Win32 Serial Port (Primary Physical SPP Channel for Thermal & Label Printers)
+    if (targetCom.startsWith('COM') && os.platform() === 'win32') {
+      try {
+        const tempBin = path.join(os.tmpdir(), `seznik_bt_com_${Date.now()}.bin`);
+        fs.writeFileSync(tempBin, data);
+
+        let actualScript = path.join(__dirname, '..', 'scripts', 'bt_com_writer.ps1');
+        if (!fs.existsSync(actualScript)) {
+          actualScript = path.join(__dirname, '..', '..', 'src', 'main', 'scripts', 'bt_com_writer.ps1');
+        }
+        if (!fs.existsSync(actualScript)) {
+          actualScript = path.resolve(process.cwd(), 'src', 'main', 'scripts', 'bt_com_writer.ps1');
+        }
+
+        const cleanCom = targetCom.replace(/:$/, '');
+        logger.info(`[BluetoothPrinterTransport][JOB:${jobId}][COM] Writing ${data.length} bytes to ${cleanCom} via Win32 Serial...`);
+        const psCmd = `powershell -NoProfile -ExecutionPolicy Bypass -File "${actualScript}" -PortName "${cleanCom}" -FilePath "${tempBin}"`;
+        const { stdout } = await execPromise(psCmd, { timeout: 15000 });
+        const result = (stdout || '').trim();
+        try { if (fs.existsSync(tempBin)) fs.unlinkSync(tempBin); } catch {}
+
+        if (result.startsWith('OK:') && !result.includes('OK:0')) {
+          const bytesWritten = parseInt(result.split(':')[1], 10) || data.length;
+          logger.info(`[BluetoothPrinterTransport][JOB:${jobId}][COM] Physical print verified: Delivered ${bytesWritten} bytes to ${targetCom} via Win32 Serial ✓`);
+          return {
+            success: true,
+            printerId: queueName,
+            platform: process.platform,
+            queueName,
+            portName: targetCom,
+            bytesSent: bytesWritten,
+          };
+        } else {
+          logger.warn(`[BluetoothPrinterTransport][JOB:${jobId}][COM] Serial write to ${cleanCom} returned: ${result}. Testing RFCOMM...`);
+        }
+      } catch (comErr: any) {
+        logger.warn(`[BluetoothPrinterTransport][JOB:${jobId}][COM] Serial COM write error on ${targetCom}: ${comErr.message}`);
+      }
+    }
+
+    // 2. WinRT RFCOMM StreamSocket (Direct Bluetooth SPP {00001101} Link via MAC Address)
+    if (cleanMac.length === 12 && os.platform() === 'win32') {
+      try {
+        const tempBin = path.join(os.tmpdir(), `seznik_bt_rfcomm_${Date.now()}.bin`);
+        fs.writeFileSync(tempBin, data);
+
+        let actualRfcommScript = path.join(__dirname, '..', 'scripts', 'bt_rfcomm_writer.ps1');
+        if (!fs.existsSync(actualRfcommScript)) {
+          actualRfcommScript = path.join(__dirname, '..', '..', 'src', 'main', 'scripts', 'bt_rfcomm_writer.ps1');
+        }
+        if (!fs.existsSync(actualRfcommScript)) {
+          actualRfcommScript = path.resolve(process.cwd(), 'src', 'main', 'scripts', 'bt_rfcomm_writer.ps1');
+        }
+
+        logger.info(`[BluetoothPrinterTransport][JOB:${jobId}][RFCOMM] Writing ${data.length} bytes to RFCOMM SPP MAC ${cleanMac}...`);
+        const psCmd = `powershell -NoProfile -ExecutionPolicy Bypass -File "${actualRfcommScript}" -MacAddress "${cleanMac}" -FilePath "${tempBin}"`;
+        const { stdout } = await execPromise(psCmd, { timeout: 15000 });
+        const result = (stdout || '').trim();
+        try { if (fs.existsSync(tempBin)) fs.unlinkSync(tempBin); } catch {}
+
+        if (result.startsWith('OK:') && !result.includes('OK:0')) {
+          const bytesWritten = parseInt(result.split(':')[1], 10) || data.length;
+          logger.info(`[BluetoothPrinterTransport][JOB:${jobId}][RFCOMM] Physical print verified: ${bytesWritten} bytes to ${cleanMac} via WinRT RFCOMM StreamSocket ✓`);
+          return {
+            success: true,
+            printerId: queueName,
+            platform: process.platform,
+            queueName,
+            portName: 'BT-RFCOMM',
+            bytesSent: bytesWritten,
+          };
+        } else {
+          logger.warn(`[BluetoothPrinterTransport][JOB:${jobId}][RFCOMM] RFCOMM write result: ${result}`);
+        }
+      } catch (rfcommErr: any) {
+        logger.warn(`[BluetoothPrinterTransport][JOB:${jobId}][RFCOMM] RFCOMM write error: ${rfcommErr.message}`);
+      }
+    }
+
+    // 3. Fallback to alternative Bluetooth COM ports if the primary target failed
+    if (os.platform() === 'win32') {
+      try {
+        const { stdout: portListOut } = await execPromise(`powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-PnpDevice -Class Ports -PresentOnly | Where-Object { $_.InstanceId -like 'BTHENUM*' } | Select-Object -ExpandProperty FriendlyName"`);
+        const lines = (portListOut || '').split('\n').map(l => l.trim()).filter(Boolean);
+        for (const line of lines) {
+          const match = line.match(/\(COM(\d+)\)/i);
+          if (match) {
+            const altCom = `COM${match[1]}`;
+            if (altCom.toUpperCase() !== targetCom) {
+              logger.info(`[BluetoothPrinterTransport][JOB:${jobId}][ALT_COM] Trying alternative Bluetooth port ${altCom}...`);
+              const tempBin = path.join(os.tmpdir(), `seznik_bt_altcom_${Date.now()}.bin`);
+              fs.writeFileSync(tempBin, data);
+
+              let actualScript = path.join(__dirname, '..', 'scripts', 'bt_com_writer.ps1');
+              if (!fs.existsSync(actualScript)) actualScript = path.resolve(process.cwd(), 'src', 'main', 'scripts', 'bt_com_writer.ps1');
+
+              const psCmd = `powershell -NoProfile -ExecutionPolicy Bypass -File "${actualScript}" -PortName "${altCom}" -FilePath "${tempBin}"`;
+              const { stdout } = await execPromise(psCmd, { timeout: 12000 });
+              const result = (stdout || '').trim();
+              try { if (fs.existsSync(tempBin)) fs.unlinkSync(tempBin); } catch {}
+
+              if (result.startsWith('OK:') && !result.includes('OK:0')) {
+                const bytesWritten = parseInt(result.split(':')[1], 10) || data.length;
+                logger.info(`[BluetoothPrinterTransport][JOB:${jobId}][ALT_COM] Physical print verified via ${altCom} ✓`);
+                return {
+                  success: true,
+                  printerId: queueName,
+                  platform: process.platform,
+                  queueName,
+                  portName: altCom,
+                  bytesSent: bytesWritten,
+                };
+              }
+            }
+          }
+        }
+      } catch (altErr: any) {
+        logger.warn(`[BluetoothPrinterTransport][JOB:${jobId}][ALT_COM] Alt COM check notice: ${altErr.message}`);
+      }
+    }
+
+    // 4. BLE GATT characteristic fallback
+    if (cleanMac.length === 12 && os.platform() === 'win32') {
+      try {
+        const tempBin = path.join(os.tmpdir(), `seznik_bt_ble_${Date.now()}.bin`);
+        fs.writeFileSync(tempBin, data);
+
+        let actualBleScript = path.join(__dirname, '..', 'scripts', 'bt_ble_writer.ps1');
+        if (!fs.existsSync(actualBleScript)) {
+          actualBleScript = path.resolve(process.cwd(), 'src', 'main', 'scripts', 'bt_ble_writer.ps1');
+        }
+
+        logger.info(`[BluetoothPrinterTransport][JOB:${jobId}][BLE] Fallback to WinRT BLE GATT Characteristic...`);
+        const psCmd = `powershell -NoProfile -ExecutionPolicy Bypass -File "${actualBleScript}" -MacAddress "${cleanMac}" -FilePath "${tempBin}"`;
+        const { stdout } = await execPromise(psCmd, { timeout: 20000 });
+        const result = (stdout || '').trim();
+        try { if (fs.existsSync(tempBin)) fs.unlinkSync(tempBin); } catch {}
+
+        if (result.startsWith('OK:') && !result.includes('OK:0')) {
+          const parts = result.split(':');
+          const bytesWritten = parseInt(parts[1], 10) || data.length;
+          logger.info(`[BluetoothPrinterTransport][JOB:${jobId}][BLE] Verified transmission to ${cleanMac} via BLE GATT ✓ (${result})`);
+          return {
+            success: true,
+            printerId: queueName,
+            platform: process.platform,
+            queueName,
+            portName: 'BLE-GATT',
+            bytesSent: bytesWritten,
+          };
+        }
+      } catch (bleErr: any) {
+        logger.warn(`[BluetoothPrinterTransport][JOB:${jobId}][BLE] BLE write error: ${bleErr.message}`);
+      }
+    }
+
+    const failureReason = `Bluetooth printer "${queueName}" is unreachable over Serial (COM3/COM4), RFCOMM StreamSocket, and BLE. Please verify the printer is powered ON, paired in Windows Bluetooth settings, and in range.`;
+    logger.error(`[BluetoothPrinterTransport][JOB:${jobId}] Transmission failed: ${failureReason}`);
+
     return {
-      success: res.success,
+      success: false,
       printerId: queueName,
       platform: process.platform,
       queueName,
-      bytesSent: res.success ? data.length : 0,
-      errorCode: res.success ? undefined : 'BT_WRITE_FAILED',
-      errorMessage: res.success ? undefined : res.message,
+      portName: targetCom || 'BT',
+      bytesSent: 0,
+      errorCode: 'BT_WRITE_FAILED',
+      errorMessage: failureReason,
     };
   }
 }

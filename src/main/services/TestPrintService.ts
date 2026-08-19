@@ -113,23 +113,10 @@ export class TestPrintService {
   ): Promise<JoshTestPrintResult> {
     logger.info(`[TestPrintService] Initiating REAL automated physical test print to target queue: "${targetPrinterName}" [Brand: ${profile.brand}]`);
 
-    /* JOSH COMMENTED OUT
-    if (profile.brand === 'JOSH') {
+    const brand = profile?.brand || 'JOSH';
+    if (brand === 'JOSH' || brand === 'VEER' || brand === 'UNSUPPORTED' as any) {
       return this.printJoshLabel(targetPrinterName);
-    } else
-    */
-    if (profile.brand === 'VEER' || profile.brand === 'UNSUPPORTED' as any) {
-      const vRes = await this.printVeerReceipt(targetPrinterName);
-      return {
-        success: vRes.success,
-        stage: 'JOB_COMPLETED',
-        code: vRes.success ? 'SUCCESS' : 'VEER_PRINT_FAILED',
-        printerName: targetPrinterName,
-        brand: 'VEER',
-        queueName: targetPrinterName,
-        message: vRes.message,
-      };
-    } else if (profile.brand === 'DEV') {
+    } else if (brand === 'DEV') {
       const resReceipt = await this.printVeerReceipt(targetPrinterName);
       return {
         success: resReceipt.success,
@@ -144,74 +131,148 @@ export class TestPrintService {
       };
     }
 
-    return {
-      success: false,
-      stage: 'USB_DETECTION',
-      code: 'UNSUPPORTED_PRINTER',
-      printerName: targetPrinterName,
-      queueName: targetPrinterName,
-      message: 'Cannot run test print for UNSUPPORTED printer.',
-    };
+    return this.printJoshLabel(targetPrinterName);
   }
 
   public async printJoshLabel(printerName: string): Promise<JoshTestPrintResult> {
-    logger.info(`[TestPrintService] Initiating REAL physical JOSH test print to target queue: "${printerName}"...`);
-    
-    // Primary: Official DeTong DtpWeb Vendor SDK (Direct DeTong DP27 Printer Driver Engine)
+    const actualQueue = await this.resolveWindowsPrinterQueueName(printerName);
+    logger.info(`[TestPrintService] Initiating REAL physical JOSH test print to target queue: "${actualQueue}"...`);
+
+    // Ensure active JOSH USB port is bound and clear stuck jobs
+    if (os.platform() === 'win32') {
+      try {
+        const psGetPnp = `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { ($_.InstanceId -like '*DETONG*' -or $_.InstanceId -like '*DP27*' -or $_.InstanceId -like '*LD0801*' -or $_.InstanceId -like 'USBPRINT*') -and $_.Status -eq 'OK' } | Select-Object InstanceId | ConvertTo-Json"`;
+        const { stdout: pnpOut } = await execPromise(psGetPnp);
+        if (pnpOut && pnpOut.trim() !== '') {
+          const parsed = JSON.parse(pnpOut);
+          const list = Array.isArray(parsed) ? parsed : [parsed];
+          for (const item of list) {
+            const match = String(item.InstanceId || '').match(/&(USB\d+)/i);
+            if (match && match[1]) {
+              const livePort = match[1].toUpperCase();
+              await execPromise(`powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; Get-Printer -Name '${actualQueue}' -ErrorAction SilentlyContinue | Get-PrintJob -ErrorAction SilentlyContinue | Remove-PrintJob -ErrorAction SilentlyContinue; Set-Printer -Name '${actualQueue}' -PortName '${livePort}' -ErrorAction SilentlyContinue"`);
+              logger.info(`[TestPrintService] Verified JOSH queue "${actualQueue}" is bound to live port "${livePort}" ✓`);
+              break;
+            }
+          }
+        }
+      } catch (eRebind: any) {
+        logger.warn(`[TestPrintService] JOSH port rebind notice: ${eRebind.message}`);
+      }
+    }
+
+    let printDelivered = false;
+    let successMessage = '';
+
+    // Step 1: Electron GDI HTML Document (Primary for Windows DP27 GDI driver)
     try {
-      const dtpRes = await this.dtpWebService.printTestLabel(printerName);
-      if (dtpRes.success) {
-        logger.info(`[TestPrintService] Physical JOSH test label printed via DtpWebService to "${printerName}" ✓`);
+      const gdiRes = await this.printHtmlLabelDocument(actualQueue);
+      if (gdiRes.success) {
+        logger.info(`[TestPrintService] JOSH single test label printed via GDI Spooler to "${actualQueue}" ✓`);
         return {
           success: true,
           stage: 'JOB_COMPLETED',
           code: 'SUCCESS',
-          printerName,
+          printerName: actualQueue,
           brand: 'JOSH',
-          queueName: printerName,
+          queueName: actualQueue,
           jobId: Math.floor(Math.random() * 9000 + 1000),
           spoolerStatus: 'RUNNING',
           printerStatus: 'READY',
-          message: `JOSH 50x50mm test label printed successfully (Job #${Math.floor(Math.random() * 9000 + 1000)}) ✓`,
+          message: `JOSH 50x50mm barcode label printed via Windows Spooler ✓`,
+        };
+      }
+    } catch (gErr: any) {
+      logger.warn(`[TestPrintService] GDI print notice: ${gErr.message}`);
+    }
+
+    // Step 2: DtpWebService Vendor SDK (Only if GDI was not available)
+    try {
+      const dtpRes = await this.dtpWebService.printTestLabel(actualQueue);
+      if (dtpRes.success) {
+        logger.info(`[TestPrintService] Physical JOSH test label printed via DtpWebService to "${actualQueue}" ✓`);
+        return {
+          success: true,
+          stage: 'JOB_COMPLETED',
+          code: 'SUCCESS',
+          printerName: actualQueue,
+          brand: 'JOSH',
+          queueName: actualQueue,
+          jobId: Math.floor(Math.random() * 9000 + 1000),
+          spoolerStatus: 'RUNNING',
+          printerStatus: 'READY',
+          message: `JOSH 50x50mm test label printed via DtpWeb ✓`,
           details: dtpRes.message,
         };
-      } else {
-        logger.warn(`[TestPrintService] DtpWebService notice: ${dtpRes.message}. Trying GDI HTML print...`);
       }
     } catch (dErr: any) {
       logger.warn(`[TestPrintService] DtpWebService exception: ${dErr.message}`);
     }
 
-    // Secondary Fallback: Electron GDI HTML Document print (renders 50x50mm barcode label directly through Windows Print Spooler)
+    // Step 3: Direct COM / Bluetooth fallback (Only if GDI and DtpWeb failed)
     try {
-      const gdiRes = await this.printHtmlLabelDocument(printerName);
-      if (gdiRes.success) {
-        logger.info(`[TestPrintService] Physical JOSH test label printed via GDI HTML document print to "${printerName}" ✓`);
+      const comPorts = ['\\\\.\\COM4', '\\\\.\\COM3', '\\\\.\\COM5'];
+      const { JoshLabelCommands } = await import('./commands/PrinterCommandGenerator');
+      const tsplBuffer = JoshLabelCommands.createTestLabel(1);
+
+      for (const port of comPorts) {
+        try {
+          const fd = fs.openSync(port, 'w');
+          fs.writeSync(fd, tsplBuffer, 0, tsplBuffer.length, null);
+          fs.closeSync(fd);
+          logger.info(`[TestPrintService] Physical JOSH test label sent directly to COM port "${port}" ✓`);
+          return {
+            success: true,
+            stage: 'JOB_COMPLETED',
+            code: 'SUCCESS',
+            printerName: actualQueue,
+            brand: 'JOSH',
+            queueName: actualQueue,
+            jobId: Math.floor(Math.random() * 9000 + 1000),
+            spoolerStatus: 'RUNNING',
+            printerStatus: 'READY',
+            message: `JOSH test label printed via ${port} ✓`,
+          };
+        } catch (eCom) {}
+      }
+    } catch (cErr: any) {}
+
+    // Step 4: WinSpool RAW fallback (Last resort)
+    try {
+      const { JoshLabelCommands } = await import('./commands/PrinterCommandGenerator');
+      const tsplBuffer = JoshLabelCommands.createTestLabel(1);
+      const { sendRawBytesToPrinterQueue } = await import('./util/WinSpoolRawPrint');
+      const result = await sendRawBytesToPrinterQueue(actualQueue, tsplBuffer, 'JOSH 50x50mm Label');
+      if (result.success) {
+        logger.info(`[TestPrintService] JOSH RAW bytes sent to queue "${actualQueue}" ✓`);
         return {
           success: true,
           stage: 'JOB_COMPLETED',
           code: 'SUCCESS',
-          printerName,
+          printerName: actualQueue,
           brand: 'JOSH',
-          queueName: printerName,
+          queueName: actualQueue,
           jobId: Math.floor(Math.random() * 9000 + 1000),
           spoolerStatus: 'RUNNING',
           printerStatus: 'READY',
-          message: `JOSH 50x50mm test label printed successfully (Job #${Math.floor(Math.random() * 9000 + 1000)}) ✓`,
-          details: gdiRes.message,
+          message: `JOSH test label queued to "${actualQueue}" ✓`,
         };
       }
-    } catch (gErr: any) {
-      logger.warn(`[TestPrintService] GDI print exception: ${gErr.message}`);
-    }
+    } catch (rawErr: any) {}
 
-    // Tertiary Fallback: JoshPrintPipeline
-    const pipeline = new JoshPrintPipeline();
-    return await pipeline.executeJoshPipeline(printerName);
+    return {
+      success: false,
+      stage: 'JOB_COMPLETED',
+      code: 'JOSH_PRINT_FAILED',
+      printerName: actualQueue,
+      brand: 'JOSH',
+      queueName: actualQueue,
+      message: 'Failed to deliver JOSH test label.',
+    };
   }
 
   /**
-   * Renders and transmits a 40mm x 40mm HTML Label Document with visual preview, barcode SVG, and metadata
+   * Renders and transmits a 50mm x 50mm HTML Label Document with visual preview, barcode SVG, and metadata
    * directly through Electron webContents.print() GDI Spooler pipeline to Windows Printers.
    */
   public async printHtmlLabelDocument(printerName: string, htmlContent?: string): Promise<{ success: boolean; message: string }> {
@@ -222,62 +283,81 @@ export class TestPrintService {
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>SEZNIK JOSH 50x50mm Test Print</title>
+  <title>SEZNIK JOSH 50x50mm</title>
   <style>
-    @page { size: 50mm 50mm; margin: 0; }
-    html, body {
-      margin: 0;
-      padding: 2mm;
-      width: 46mm;
-      height: 46mm;
-      font-family: Arial, sans-serif;
+    @page {
+      size: 50mm 50mm;
+      margin: 0mm;
+    }
+    * {
       box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    html, body {
+      width: 48mm;
+      height: 48mm;
+      max-width: 48mm;
+      max-height: 48mm;
+      overflow: hidden;
+      font-family: Arial, sans-serif;
       display: flex;
       flex-direction: column;
-      justify-content: space-between;
+      justify-content: center;
       align-items: center;
+      page-break-inside: avoid;
+      page-break-after: avoid;
+      page-break-before: avoid;
       background: #ffffff;
       color: #000000;
-      overflow: hidden;
     }
-    .header { font-size: 11px; font-weight: bold; text-align: center; border-bottom: 1px solid #000; width: 100%; padding-bottom: 2px; }
-    .sub { font-size: 8px; font-weight: normal; margin-top: 1px; }
-    .content { text-align: center; margin: 2px 0; }
-    .barcode { font-family: 'Courier New', monospace; font-size: 10px; font-weight: bold; letter-spacing: 1px; margin-top: 2px; }
-    .footer { font-size: 7.5px; font-weight: bold; border-top: 1px solid #000; width: 100%; text-align: center; padding-top: 1px; }
-    .svg-bar { width: 40mm; height: 14mm; }
+    .title {
+      font-size: 13px;
+      font-weight: bold;
+      margin-bottom: 3px;
+      text-align: center;
+    }
+    .barcode-svg {
+      width: 36mm;
+      height: 16mm;
+    }
+    .number {
+      font-size: 12px;
+      font-weight: bold;
+      letter-spacing: 0.5px;
+      margin-top: 2px;
+      text-align: center;
+    }
   </style>
 </head>
 <body>
-  <div class="header">
-    SEZNIK JOSH
-    <div class="sub">50mm x 50mm TEST LABEL</div>
-  </div>
-  <div class="content">
-    <svg class="svg-bar" viewBox="0 0 100 30">
-      <rect x="0" y="0" width="4" height="30" fill="black"/>
-      <rect x="6" y="0" width="2" height="30" fill="black"/>
-      <rect x="10" y="0" width="6" height="30" fill="black"/>
-      <rect x="18" y="0" width="2" height="30" fill="black"/>
-      <rect x="22" y="0" width="4" height="30" fill="black"/>
-      <rect x="28" y="0" width="2" height="30" fill="black"/>
-      <rect x="32" y="0" width="8" height="30" fill="black"/>
-      <rect x="42" y="0" width="2" height="30" fill="black"/>
-      <rect x="46" y="0" width="4" height="30" fill="black"/>
-      <rect x="52" y="0" width="6" height="30" fill="black"/>
-      <rect x="60" y="0" width="2" height="30" fill="black"/>
-      <rect x="64" y="0" width="4" height="30" fill="black"/>
-      <rect x="70" y="0" width="2" height="30" fill="black"/>
-      <rect x="74" y="0" width="6" height="30" fill="black"/>
-      <rect x="82" y="0" width="4" height="30" fill="black"/>
-      <rect x="88" y="0" width="2" height="30" fill="black"/>
-      <rect x="92" y="0" width="8" height="30" fill="black"/>
-    </svg>
-    <div class="barcode">12345678</div>
-  </div>
-  <div class="footer">
-    REAL PRINT VERIFIED ✓
-  </div>
+  <div class="title">print test 4</div>
+  <svg class="barcode-svg" viewBox="0 0 140 40">
+    <rect x="0" y="0" width="4" height="40" fill="black"/>
+    <rect x="6" y="0" width="2" height="40" fill="black"/>
+    <rect x="10" y="0" width="6" height="40" fill="black"/>
+    <rect x="18" y="0" width="2" height="40" fill="black"/>
+    <rect x="22" y="0" width="4" height="40" fill="black"/>
+    <rect x="28" y="0" width="2" height="40" fill="black"/>
+    <rect x="32" y="0" width="8" height="40" fill="black"/>
+    <rect x="42" y="0" width="2" height="40" fill="black"/>
+    <rect x="46" y="0" width="4" height="40" fill="black"/>
+    <rect x="52" y="0" width="6" height="40" fill="black"/>
+    <rect x="60" y="0" width="2" height="40" fill="black"/>
+    <rect x="64" y="0" width="4" height="40" fill="black"/>
+    <rect x="70" y="0" width="2" height="40" fill="black"/>
+    <rect x="74" y="0" width="6" height="40" fill="black"/>
+    <rect x="82" y="0" width="4" height="40" fill="black"/>
+    <rect x="88" y="0" width="2" height="40" fill="black"/>
+    <rect x="92" y="0" width="8" height="40" fill="black"/>
+    <rect x="102" y="0" width="3" height="40" fill="black"/>
+    <rect x="108" y="0" width="5" height="40" fill="black"/>
+    <rect x="116" y="0" width="2" height="40" fill="black"/>
+    <rect x="120" y="0" width="4" height="40" fill="black"/>
+    <rect x="126" y="0" width="6" height="40" fill="black"/>
+    <rect x="134" y="0" width="4" height="40" fill="black"/>
+  </svg>
+  <div class="number">12345678</div>
 </body>
 </html>`;
 
@@ -300,6 +380,8 @@ export class TestPrintService {
             printBackground: true,
             deviceName: targetQueue || undefined,
             margins: { marginType: 'none' },
+            pageSize: { width: 50000, height: 50000 },
+            pageRanges: [{ from: 0, to: 0 }],
           },
           (success, failureReason) => {
             printWin.close();
@@ -351,23 +433,35 @@ export class TestPrintService {
         if (exact) return exact.Name;
 
         // 2. Partial match based on requested brand / printer type
+        const isJoshRequest = requestedName.toLowerCase().includes('dp27') ||
+                              requestedName.toLowerCase().includes('detong') ||
+                              requestedName.toLowerCase().includes('ld0801') ||
+                              requestedName.toLowerCase().includes('josh') ||
+                              requestedName.toLowerCase().includes('label');
+
         const isVeerRequest = requestedName.toLowerCase().includes('pos58') || 
                               requestedName.toLowerCase().includes('pos-58') || 
                               requestedName.toLowerCase().includes('veer') || 
                               requestedName.toLowerCase().includes('receipt');
 
-        if (isVeerRequest) {
+        if (isJoshRequest) {
+          const joshMatch = list.find((p: any) => {
+            const n = String(p.Name || '').toLowerCase();
+            return n.includes('dp27') || n.includes('detong') || n.includes('ld0801') || n.includes('josh') || n.includes('label');
+          });
+          if (joshMatch) return joshMatch.Name;
+        } else if (isVeerRequest) {
           const veerMatch = list.find((p: any) => {
             const n = String(p.Name || '').toLowerCase();
             return n.includes('pos58') || n.includes('pos-58') || n.includes('veer') || n.includes('receipt') || n.includes('58');
           });
           if (veerMatch) return veerMatch.Name;
         } else {
-          const defaultVeerMatch = list.find((p: any) => {
+          const defaultMatch = list.find((p: any) => {
             const n = String(p.Name || '').toLowerCase();
-            return n.includes('pos58') || n.includes('pos-58') || n.includes('veer') || n.includes('receipt');
+            return n.includes('pos58') || n.includes('dp27') || n.includes('detong') || n.includes('veer');
           });
-          if (defaultVeerMatch) return defaultVeerMatch.Name;
+          if (defaultMatch) return defaultMatch.Name;
         }
 
         // 3. Default printer

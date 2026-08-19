@@ -1,10 +1,11 @@
 import { BrowserWindow } from 'electron';
+import os from 'os';
 import logger from '../logger';
 import { BluetoothDiscoveryService } from './BluetoothDiscoveryService';
 import { BluetoothPrinterTransport } from './transport/BluetoothPrinterTransport';
 import { ConfigurationService } from '../../services/ConfigurationService';
 import { PrinterCommandGenerator } from './commands/PrinterCommandGenerator';
-import { BluetoothConnectionState, BluetoothPairedDevice, V1PrinterProfileBrand, PrinterType } from '../../shared/types';
+import { BluetoothAdapterStatus, BluetoothConnectionState, BluetoothPairedDevice, V1PrinterProfileBrand, PrinterType } from '../../shared/types';
 import { DefaultPrinterService } from './DefaultPrinterService';
 
 // Normalizes a device id/mac-address into a stable, comparable key (used both
@@ -18,9 +19,7 @@ function normalizeDeviceKey(raw: string): string {
 }
 
 function printerTypeForBrand(brand: V1PrinterProfileBrand): PrinterType {
-  /* JOSH COMMENTED OUT
   if (brand === 'JOSH') return 'LABEL';
-  */
   if (brand === 'DEV') return 'RECEIPT_AND_LABEL';
   return 'RECEIPT';
 }
@@ -30,6 +29,7 @@ const INITIAL_STATE: BluetoothConnectionState = {
   stepMessage: 'Bluetooth printer not connected yet.',
   devices: [],
   isScanning: false,
+  adapterStatus: 'UNKNOWN',
   connectedDeviceId: null,
   connectedDeviceName: null,
   connectedComPort: null,
@@ -68,9 +68,11 @@ export class BluetoothPrinterService {
 
   private updateState(partial: Partial<BluetoothConnectionState>): BluetoothConnectionState {
     this.state = { ...this.state, ...partial };
-    logger.info(`[BluetoothPrinterService] State -> [${this.state.step}] ${this.state.stepMessage}`);
+    logger.info(`[BT:STATE] Step -> [${this.state.step}] ${this.state.stepMessage}`);
     if (this.window && !this.window.isDestroyed()) {
-      this.window.webContents.send('event:bluetoothStateChanged', this.state);
+      try {
+        this.window.webContents.send('event:bluetoothStateChanged', this.state);
+      } catch (e) {}
     }
     return this.getState();
   }
@@ -84,23 +86,49 @@ export class BluetoothPrinterService {
     this.updateState({ step: 'SCANNING', stepMessage: 'Scanning Windows-paired Bluetooth devices...', isScanning: true });
 
     try {
-      const devices = await this.discovery.getPairedDevices();
+      const result = await this.discovery.getPairedDevices();
+      const { adapterStatus, devices } = result;
+
+      // Check adapter status first — surface specific error if adapter is off or missing
+      if (adapterStatus === 'NOT_PRESENT') {
+        return this.updateState({
+          step: 'ADAPTER_MISSING',
+          stepMessage: 'No Bluetooth adapter found on this computer. A USB Bluetooth dongle is required for wireless printing.',
+          devices: [],
+          isScanning: false,
+          adapterStatus,
+        });
+      }
+
+      if (adapterStatus === 'PRESENT_BUT_DISABLED') {
+        return this.updateState({
+          step: 'ADAPTER_OFF',
+          stepMessage: 'Bluetooth is turned off. Enable it in Windows Settings → Bluetooth & devices, then rescan.',
+          devices: [],
+          isScanning: false,
+          adapterStatus,
+        });
+      }
+
       if (devices.length === 0) {
         return this.updateState({
           step: 'NO_DEVICES_FOUND',
           stepMessage: 'No paired Bluetooth devices found. Pair your printer in Windows Bluetooth settings first.',
           devices: [],
           isScanning: false,
+          adapterStatus,
         });
       }
+
       return this.updateState({
         step: 'DEVICES_FOUND',
         stepMessage: `Found ${devices.length} paired Bluetooth device(s).`,
         devices,
         isScanning: false,
+        adapterStatus,
       });
     } catch (err: any) {
-      logger.error(`[BluetoothPrinterService] scanPairedDevices failed: ${err.message}`);
+      logger.error(`[BT:DISCOVERY] scanPairedDevices failed: ${err.message}`);
       return this.updateState({
         step: 'ERROR',
         stepMessage: `Bluetooth scan failed: ${err.message}`,
@@ -150,8 +178,8 @@ export class BluetoothPrinterService {
     if (!device) {
       // Device list may be stale (e.g. user re-opened the modal) — rescan once.
       const rescanned = await this.discovery.getPairedDevices();
-      this.updateState({ devices: rescanned });
-      device = this.findDevice(rescanned, deviceId);
+      this.updateState({ devices: rescanned.devices, adapterStatus: rescanned.adapterStatus });
+      device = this.findDevice(rescanned.devices, deviceId);
     }
 
     if (!device) {
@@ -162,37 +190,89 @@ export class BluetoothPrinterService {
       });
     }
 
-    if (!device.comPort) {
-      return this.updateState({
-        step: 'ERROR',
-        stepMessage: `"${device.name}" is paired but Windows hasn't bound a serial port to it yet. Open Windows Bluetooth settings, remove and re-pair the printer, and make sure "Serial Port" / SPP service is enabled, then rescan.`,
-        errorDetails: 'NO_COM_PORT',
-      });
-    }
-
     const resolvedBrand: V1PrinterProfileBrand =
-      brand && brand !== 'UNSUPPORTED' ? brand : device.likelyBrand !== 'UNSUPPORTED' ? device.likelyBrand : 'VEER';
+      brand && brand !== 'UNSUPPORTED' ? brand : device.likelyBrand !== 'UNSUPPORTED' ? device.likelyBrand : 'JOSH';
 
     const savedId = `seznik-bt-${normalizeDeviceKey(device.id)}`;
     const queueName = await this.resolveQueueName(device.name, savedId);
 
-    // Step 1: CONNECTING — initial state
+    // ──────────────────────────────────────────────────────────────
+    // Step 1: PAIRING — auto-pair / link synchronization
+    // ──────────────────────────────────────────────────────────────
+    const typeLabel = resolvedBrand === 'JOSH' ? 'label' : 'receipt';
     this.updateState({
-      step: 'CONNECTING',
-      stepMessage: `Setting up "${device.name}" as a receipt printer (${resolvedBrand})...`,
+      step: 'PAIRING',
+      stepMessage: `Synchronizing wireless link to "${device.name}" (${resolvedBrand} ${typeLabel} printer)...`,
     });
 
-    // Step 2: INSTALLING_DRIVER + CREATING_QUEUE + SETTING_DEFAULT
-    // All handled inside registerPrinterQueue which:
-    //   - Checks/installs POS58 driver (driver-only, no USB queue)
-    //   - Creates Windows Spooler queue on Bluetooth COM port
-    //   - Sets as Windows system default printer
+    if (device.address) {
+      const pairResult = await this.autoPair(device.address, false);
+      logger.info(`[BT:PAIRING] Auto-pair for ${device.address}: ${pairResult ? 'OK' : 'skipped/failed (non-fatal)'}`);
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // Step 2: COM PORT — resolve or auto-create
+    // ──────────────────────────────────────────────────────────────
+    let effectiveComPort = device.comPort;
+
+    if (!effectiveComPort && device.address) {
+      this.updateState({
+        step: 'COM_PORT_CREATING',
+        stepMessage: `Resolving serial port for "${device.name}"...`,
+      });
+
+      const comResult = await this.discovery.ensureComPort(device.address);
+
+      if (comResult.comPort) {
+        effectiveComPort = comResult.comPort;
+        logger.info(`[BT:COM_PORT] Auto-resolved COM port: ${effectiveComPort}`);
+      } else if (comResult.hasRfcomm) {
+        // Device supports RFCOMM but no COM port — we can still print via
+        // the RFCOMM StreamSocket path in BluetoothPrinterTransport.write()
+        // Create a synthetic COM port reference for the queue — Windows may
+        // not need it since we bypass the spooler for actual data transmission
+        logger.info(`[BT:COM_PORT] No COM port but RFCOMM available — will use direct RFCOMM transport for ${device.address}`);
+        // Use COM99 as a placeholder port for queue registration; actual
+        // printing goes through RFCOMM StreamSocket bypassing the spooler
+        effectiveComPort = 'COM99';
+      } else {
+        logger.warn(`[BT:COM_PORT] Cannot resolve COM port for "${device.name}": ${comResult.error}`);
+        return this.updateState({
+          step: 'NO_COM_PORT',
+          stepMessage: `Cannot connect: Windows hasn't created a serial port for "${device.name}". Open Windows Settings → Bluetooth & devices → find this device → More options → "More Bluetooth settings" → COM Ports → Add → Outgoing, select "${device.name}", and click OK. Then rescan and try again.`,
+          errorDetails: 'NO_COM_PORT',
+        });
+      }
+    }
+
+    if (!effectiveComPort) {
+      return this.updateState({
+        step: 'NO_COM_PORT',
+        stepMessage: `Cannot connect: No Bluetooth MAC address or serial port available for "${device.name}". Remove and re-pair the device in Windows Bluetooth settings, then rescan.`,
+        errorDetails: 'NO_COM_PORT_NO_MAC',
+      });
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // Step 3: DRIVER — install if needed
+    // ──────────────────────────────────────────────────────────────
     this.updateState({
-      step: 'CONNECTING',
-      stepMessage: `Installing driver and creating printer queue for "${device.name}"...`,
+      step: 'DRIVER_INSTALLING',
+      stepMessage: `Checking ${resolvedBrand} driver for "${device.name}"...`,
     });
 
-    const registerResult = await this.transport.registerPrinterQueue(device.comPort, queueName, resolvedBrand);
+    // (Driver installation happens inside registerPrinterQueue — this step
+    // just provides UI feedback that something is happening)
+
+    // ──────────────────────────────────────────────────────────────
+    // Step 4: QUEUE — register Windows printer queue on the COM port
+    // ──────────────────────────────────────────────────────────────
+    this.updateState({
+      step: 'QUEUE_REGISTERING',
+      stepMessage: `Installing printer queue for "${device.name}" on ${effectiveComPort}...`,
+    });
+
+    const registerResult = await this.transport.registerPrinterQueue(effectiveComPort, queueName, resolvedBrand);
     if (!registerResult.success) {
       return this.updateState({
         step: 'ERROR',
@@ -201,48 +281,81 @@ export class BluetoothPrinterService {
       });
     }
 
-    // Step 3: CONNECTED — queue is ready
+    // ──────────────────────────────────────────────────────────────
+    // Step 5: CONNECTED — queue is ready
+    // ──────────────────────────────────────────────────────────────
     this.updateState({
       step: 'CONNECTED',
       stepMessage: `"${queueName}" is ready and set as system default — find it in any app's Print dialog (Ctrl+P).`,
       connectedDeviceId: device.id,
       connectedDeviceName: device.name,
-      connectedComPort: device.comPort,
+      connectedComPort: effectiveComPort,
       connectedQueueName: queueName,
       connectedDriverName: registerResult.driverUsed,
       connectedBrand: resolvedBrand,
-      testPrintSuccess: false,
-      lastTestPrintMessage: null,
+      connectedMacAddress: device.address || null,
       lastReachabilityCheck: null,
     });
 
-    // Step 4: Persist to config + set as default in app
+    // ──────────────────────────────────────────────────────────────
+    // Step 6: Persist to config + set as default in app
+    // ──────────────────────────────────────────────────────────────
     try {
       await this.appConfig.savePrinter({
         id: savedId,
         name: queueName,
         driverName: registerResult.driverUsed,
-        portName: device.comPort,
+        portName: effectiveComPort,
         connectionType: 'BLUETOOTH',
         isDefault: true,
         printerType: printerTypeForBrand(resolvedBrand),
         macAddress: device.address,
       });
       await this.appConfig.setSavedDefaultPrinter(savedId);
+      logger.info(`[BT:CONFIG] Persisted printer "${queueName}" (${savedId}) as default ✓`);
     } catch (persistErr: any) {
-      logger.warn(`[BluetoothPrinterService] Failed to persist Bluetooth printer: ${persistErr.message}`);
+      logger.warn(`[BT:CONFIG] Failed to persist Bluetooth printer: ${persistErr.message}`);
     }
 
-    // Step 5: Automatic test print
+    // ──────────────────────────────────────────────────────────────
+    // Step 7: Automatically trigger test print
+    // ──────────────────────────────────────────────────────────────
     return this.triggerTestPrint();
+  }
+
+  private async autoPair(macAddress: string, forceRePair = false): Promise<boolean> {
+    if (!macAddress) return false;
+    try {
+      const { exec } = require('child_process');
+      const util = require('util');
+      const execPromise = util.promisify(exec);
+      const fs = require('fs');
+      const path = require('path');
+
+      let scriptPath = path.join(__dirname, '..', 'scripts', 'bt_auto_pair.ps1');
+      if (!fs.existsSync(scriptPath)) {
+        scriptPath = path.join(__dirname, '..', '..', 'src', 'main', 'scripts', 'bt_auto_pair.ps1');
+      }
+      if (!fs.existsSync(scriptPath)) {
+        scriptPath = path.resolve(process.cwd(), 'src', 'main', 'scripts', 'bt_auto_pair.ps1');
+      }
+      const psCmd = `powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}" -MacAddress "${macAddress}" -ForceRePair $${forceRePair}`;
+      const { stdout } = await execPromise(psCmd, { timeout: 20000 });
+      logger.info(`[BT:PAIRING] bt_auto_pair result for [${macAddress}]: ${stdout?.trim()}`);
+      return (stdout || '').includes('OK:');
+    } catch (e: any) {
+      logger.warn(`[BT:PAIRING] bt_auto_pair notice: ${e.message}`);
+      return false;
+    }
   }
 
   async triggerTestPrint(): Promise<BluetoothConnectionState> {
     const queueName = this.state.connectedQueueName;
-    const brand = this.state.connectedBrand || 'VEER';
-    const jobLabel = 'test receipt';
+    const comPort = this.state.connectedComPort;
+    const brand = this.state.connectedBrand || 'JOSH';
+    const jobLabel = brand === 'JOSH' ? 'test label' : 'test receipt';
 
-    if (!queueName) {
+    if (!queueName && !comPort) {
       return this.updateState({
         step: 'ERROR',
         stepMessage: 'No connected Bluetooth printer to test. Connect a device first.',
@@ -250,27 +363,63 @@ export class BluetoothPrinterService {
       });
     }
 
-    this.updateState({ step: 'TEST_PRINTING', stepMessage: `Sending ${jobLabel} to "${queueName}"...` });
+    const targetDestination = queueName || comPort || 'Bluetooth Printer';
+    this.updateState({ step: 'TEST_PRINTING', stepMessage: `Sending ${jobLabel} to "${targetDestination}"...` });
 
-    // Reuses the exact same proven TSPL/ESC-POS payloads the USB pipeline
-    // sends (JoshLabelCommands for JOSH, VeerReceiptCommands otherwise).
+    // Step 1: If registered as a real Windows Printer Queue with a driver, use the official GDI spooler pipeline
+    if (queueName && os.platform() === 'win32') {
+      try {
+        logger.info(`[BT:TEST_PRINT] Printing ${brand} test document via Windows GDI Spooler to queue "${queueName}"...`);
+        const { TestPrintService } = await import('./TestPrintService');
+        const testService = new TestPrintService();
+        const profile = { brand, paperWidthMm: brand === 'JOSH' ? 50 : 58, documentType: brand === 'JOSH' ? 'LABEL' : 'RECEIPT' } as any;
+        const gdiResult = await testService.executeAutomatedTestPrint(queueName, profile);
+
+        if (gdiResult.success) {
+          logger.info(`[BT:TEST_PRINT] Physical test print delivered to queue "${queueName}" via Windows Spooler ✓`);
+          return this.updateState({
+            step: 'TEST_PRINT_SUCCESS',
+            stepMessage: `${jobLabel[0].toUpperCase()}${jobLabel.slice(1)} printed to "${queueName}" via Windows Spooler (${queueName}) ✓`,
+            testPrintSuccess: true,
+            lastTestPrintMessage: `${jobLabel} verified printed via Windows Spooler (${queueName}) ✓`,
+          });
+        } else {
+          logger.warn(`[BT:TEST_PRINT] GDI Spooler notice: ${gdiResult.message}. Testing direct transport fallback...`);
+        }
+      } catch (gdiErr: any) {
+        logger.warn(`[BT:TEST_PRINT] GDI Spooler exception: ${gdiErr.message}. Testing direct transport fallback...`);
+      }
+    }
+
+    // Step 2: Direct raw command stream fallback (TSPL for JOSH, ESC/POS for VEER)
     const payload = PrinterCommandGenerator.generateTestPayload(brand);
-    const result = await this.transport.write(queueName, payload);
+    let result = await this.transport.write(targetDestination, payload, comPort || undefined, this.state.connectedMacAddress || undefined);
+
+    // If unreachable (Error 1231), perform an automatic Link Key resync & retry once
+    if (!result.success && result.errorMessage?.includes('unreachable') && this.state.connectedMacAddress) {
+      logger.info(`[BT:TRANSPORT] Link unreachable. Attempting automatic Link Key resynchronization...`);
+      this.updateState({ step: 'CONNECTING', stepMessage: 'Re-syncing wireless Link Key...' });
+      await this.autoPair(this.state.connectedMacAddress, true);
+      this.updateState({ step: 'TEST_PRINTING', stepMessage: `Retrying ${jobLabel}...` });
+      result = await this.transport.write(targetDestination, payload, comPort || undefined, this.state.connectedMacAddress || undefined);
+    }
 
     if (result.success) {
+      logger.info(`[BT:TRANSPORT] Test print job confirmed transmitted: ${result.bytesSent} bytes via ${result.portName}`);
       return this.updateState({
         step: 'TEST_PRINT_SUCCESS',
-        stepMessage: `${jobLabel[0].toUpperCase()}${jobLabel.slice(1)} sent to "${queueName}" ✓ Check the physical printout.`,
+        stepMessage: `${jobLabel[0].toUpperCase()}${jobLabel.slice(1)} transmitted to "${targetDestination}" via ${result.portName} (${result.bytesSent} bytes) ✓`,
         testPrintSuccess: true,
-        lastTestPrintMessage: `${jobLabel} (${payload.length} bytes) delivered to "${queueName}" via the Windows print queue ✓`,
+        lastTestPrintMessage: `${jobLabel} (${result.bytesSent} bytes) verified transmitted via ${result.portName} ✓`,
       });
     }
 
+    logger.error(`[BT:TRANSPORT] Test print failed: ${result.errorMessage}`);
     return this.updateState({
       step: 'TEST_PRINT_FAILED',
-      stepMessage: `${jobLabel[0].toUpperCase()}${jobLabel.slice(1)} failed: ${result.errorMessage || 'Unknown error'}`,
+      stepMessage: `${jobLabel[0].toUpperCase()}${jobLabel.slice(1)} failed: ${result.errorMessage || 'Bluetooth radio unreachable'}`,
       testPrintSuccess: false,
-      lastTestPrintMessage: result.errorMessage || 'Unknown error',
+      lastTestPrintMessage: result.errorMessage || 'Bluetooth radio unreachable',
       errorDetails: result.errorMessage,
     });
   }
@@ -337,7 +486,7 @@ export class BluetoothPrinterService {
       }
       await this.appConfig.removeSavedPrinter(savedId);
     } catch (err: any) {
-      logger.warn(`[BluetoothPrinterService] forgetDevice cleanup notice: ${err.message}`);
+      logger.warn(`[BT:CONFIG] forgetDevice cleanup notice: ${err.message}`);
     }
 
     if (this.state.connectedDeviceId && normalizeDeviceKey(this.state.connectedDeviceId) === normalizeDeviceKey(deviceId)) {

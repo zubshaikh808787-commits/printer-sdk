@@ -276,11 +276,20 @@ export interface BluetoothPairedDevice {
   likelyBrand: V1PrinterProfileBrand;
 }
 
+export type BluetoothAdapterStatus = 'PRESENT_AND_ENABLED' | 'PRESENT_BUT_DISABLED' | 'NOT_PRESENT' | 'UNKNOWN';
+
 export type BluetoothConnectionStep =
   | 'IDLE'
   | 'SCANNING'
   | 'DEVICES_FOUND'
   | 'NO_DEVICES_FOUND'
+  | 'ADAPTER_OFF'
+  | 'ADAPTER_MISSING'
+  | 'NO_COM_PORT'
+  | 'COM_PORT_CREATING'
+  | 'PAIRING'
+  | 'DRIVER_INSTALLING'
+  | 'QUEUE_REGISTERING'
   | 'CONNECTING'
   | 'CONNECTED'
   | 'TEST_PRINTING'
@@ -305,6 +314,9 @@ export interface BluetoothConnectionState {
   stepMessage: string;
   devices: BluetoothPairedDevice[];
   isScanning: boolean;
+  // Bluetooth adapter hardware state — lets the UI distinguish "no adapter" from
+  // "adapter disabled" from "adapter on but no devices found".
+  adapterStatus: BluetoothAdapterStatus;
   connectedDeviceId: string | null;
   connectedDeviceName: string | null;
   connectedComPort: string | null;
@@ -316,6 +328,7 @@ export interface BluetoothConnectionState {
   // JOSH (label/TSPL) vs VEER (receipt/ESC-POS) vs DEV (dual) — determines
   // which driver keywords to prefer and which test payload to send.
   connectedBrand: V1PrinterProfileBrand | null;
+  connectedMacAddress?: string | null;
   testPrintSuccess: boolean;
   lastTestPrintMessage: string | null;
   // On-demand hardware reachability check — distinct from "connectedQueueName"
@@ -371,6 +384,7 @@ export interface SeznikApiBridge {
   forgetBluetoothDevice: (deviceId: string) => Promise<BluetoothConnectionState>;
   printBluetoothUploadFile: (kind: UploadPrintKind) => Promise<UploadPrintResult>;
   checkBluetoothConnection: (comPort?: string) => Promise<BluetoothConnectionState>;
+  openBluetoothSettings: () => Promise<boolean>;
 
   // Driver & Spooler Operations
   checkDriverInstalled: () => Promise<{ installed: boolean; driverName: string; queueName: string }>;

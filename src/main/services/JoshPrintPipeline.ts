@@ -306,14 +306,11 @@ export class JoshPrintPipeline {
       "SIZE 50 mm, 50 mm\r\n" +
       "GAP 3 mm, 0 mm\r\n" +
       "REFERENCE 0,0\r\n" +
-      "SET TEAR ON\r\n" +
       "DIRECTION 1\r\n" +
+      "SET TEAR ON\r\n" +
       "CLS\r\n" +
-      'TEXT 40,30,"3",0,1,1,"SEZNIK JOSH"\r\n' +
-      'TEXT 40,75,"2",0,1,1,"50x50mm TEST LABEL"\r\n' +
-      'TEXT 40,110,"2",0,1,1,"USB: CONNECTED"\r\n' +
-      `TEXT 40,140,"2",0,1,1,"QUEUE: ${queueName.substring(0, 18)}"\r\n` +
-      'BARCODE 40,175,"128",80,1,0,2,3,"12345678"\r\n' +
+      'TEXT 110,30,"3",0,1,1,"print test 4"\r\n' +
+      'BARCODE 60,80,"128",90,1,0,2,2,"12345678"\r\n' +
       "PRINT 1,1\r\n";
 
     if (!tsplPayload || tsplPayload.length < 50 || !tsplPayload.includes('PRINT 1,1')) {

@@ -21,16 +21,19 @@ interface NavItem {
 }
 
 export const Sidebar: React.FC = () => {
-  const { osPrinters, savedPrinters, v1State } = usePrinterStore();
+  const { v1State, bluetoothState } = usePrinterStore();
   const { t } = useTranslation();
 
-  const usbCount = savedPrinters.filter(p => p.connectionType === 'USB').length || (v1State.usbConnected ? osPrinters.length : 0);
-  const totalCount = savedPrinters.length > 0 ? savedPrinters.length : osPrinters.length;
+  const isUsbConnected = Boolean(v1State.usbConnected);
+  const isBtConnected = Boolean(bluetoothState.connectedQueueName);
+
+  const activeConnectedCount = (isUsbConnected ? 1 : 0) + (isBtConnected ? 1 : 0);
+  const usbBadge = isUsbConnected ? 1 : undefined;
 
   const primaryItems: NavItem[] = [
-    { path: '/', label: t.nav.dashboard, icon: <LayoutDashboard className="w-4 h-4" />, badge: totalCount || undefined },
+    { path: '/', label: t.nav.dashboard, icon: <LayoutDashboard className="w-4 h-4" />, badge: activeConnectedCount || undefined },
     { path: '/guide', label: t.guide.title || 'Setup Guide', icon: <HelpCircle className="w-4 h-4 text-blue-500" /> },
-    { path: '/detection', label: t.nav.usbPrinters, icon: <Printer className="w-4 h-4" />, badge: usbCount || undefined },
+    { path: '/detection', label: t.nav.usbPrinters, icon: <Printer className="w-4 h-4" />, badge: usbBadge },
     { path: '/drivers', label: t.nav.driversAndSetup, icon: <HardDriveDownload className="w-4 h-4" /> },
   ];
 
