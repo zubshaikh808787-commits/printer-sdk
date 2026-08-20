@@ -42,6 +42,8 @@ const seznikApi: SeznikApiBridge = {
   disconnectBluetoothDevice: () => ipcRenderer.invoke('bluetooth:disconnect'),
   forgetBluetoothDevice: (deviceId: string) => ipcRenderer.invoke('bluetooth:forget', deviceId),
   printBluetoothUploadFile: (kind) => ipcRenderer.invoke('bluetooth:printUploadFile', kind),
+  pickBluetoothFile: (kind) => ipcRenderer.invoke('bluetooth:pickFile', kind),
+  printBluetoothFileWithParams: (kind, params) => ipcRenderer.invoke('bluetooth:printFileWithParams', kind, params),
   checkBluetoothConnection: (comPort) => ipcRenderer.invoke('bluetooth:checkConnection', comPort),
   openBluetoothSettings: () => ipcRenderer.invoke('bluetooth:openSettings'),
 

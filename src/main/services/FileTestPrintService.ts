@@ -13,6 +13,39 @@ export interface UploadPrintResult {
   fileName?: string;
 }
 
+export interface PickFileResult {
+  success: boolean;
+  message: string;
+  base64?: string;
+  mimeType?: string;
+  fileName?: string;
+  filePath?: string;
+}
+
+export interface LabelPrintParams {
+  filePath: string;
+  labelSizeId: string;
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+}
+
+/** mm dimensions for each preset id (must stay in sync with renderer labelUtils.ts). */
+const LABEL_SIZE_MAP: Record<string, { widthMm: number; heightMm: number; twoUp?: boolean; twoUpGapMm?: number }> = {
+  '50x50':     { widthMm: 50,  heightMm: 50  },
+  '50x25':     { widthMm: 50,  heightMm: 25  },
+  '50x15':     { widthMm: 50,  heightMm: 15  },
+  'two-up':    { widthMm: 103, heightMm: 50, twoUp: true, twoUpGapMm: 3 },
+  'jewellery': { widthMm: 30,  heightMm: 10  },
+};
+
+const DEFAULT_LABEL_SIZE_ID = '50x50';
+const PRINTER_DPI = 203;
+
+function mmToPx(mm: number): number {
+  return Math.round((mm / 25.4) * PRINTER_DPI);
+}
+
 /**
  * Lets the user pick a real file (photo, PDF, or plain text) from disk and
  * prints it directly to Bluetooth thermal printers via TSPL/ESC-POS bitmap rasterization,
@@ -21,18 +54,12 @@ export interface UploadPrintResult {
 export class FileTestPrintService {
   private btTransport = new BluetoothPrinterTransport();
 
-  async pickAndPrint(
-    kind: UploadPrintKind,
-    queueName: string,
-    parentWindow: BrowserWindow | null,
-    macAddress?: string,
-    comPort?: string,
-    brand?: string
-  ): Promise<UploadPrintResult> {
-    if (!queueName) {
-      return { success: false, message: 'No connected printer selected. Connect a Bluetooth printer first.' };
-    }
-
+  /**
+   * Opens a file picker dialog and returns the selected file's data to the renderer
+   * for preview — does NOT print. The renderer shows the preview modal, and if
+   * the user confirms, calls pickAndPrint() with the already-resolved filePath.
+   */
+  async pickFile(kind: UploadPrintKind, parentWindow: BrowserWindow | null): Promise<PickFileResult> {
     const filters =
       kind === 'IMAGE'
         ? [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'bmp', 'gif', 'webp'] }]
@@ -40,7 +67,12 @@ export class FileTestPrintService {
         ? [{ name: 'PDF Documents', extensions: ['pdf'] }]
         : [{ name: 'Text Files', extensions: ['txt', 'log', 'csv', 'md'] }];
 
-    const dialogOpts: Electron.OpenDialogOptions = { title: `Select a ${kind.toLowerCase()} file to print`, properties: ['openFile'], filters };
+    const dialogOpts: Electron.OpenDialogOptions = {
+      title: `Select a ${kind.toLowerCase()} file to preview`,
+      properties: ['openFile'],
+      filters,
+    };
+
     const pickResult = parentWindow
       ? await dialog.showOpenDialog(parentWindow, dialogOpts)
       : await dialog.showOpenDialog(dialogOpts);
@@ -53,39 +85,101 @@ export class FileTestPrintService {
     const fileName = path.basename(filePath);
 
     try {
+      const ext = path.extname(fileName).slice(1).toLowerCase();
+      const mimeType = kind === 'PDF' ? 'application/pdf'
+        : ext === 'jpg' ? 'image/jpeg'
+        : `image/${ext}`;
+      const base64 = fs.readFileSync(filePath).toString('base64');
+      return { success: true, message: 'File selected.', base64, mimeType, fileName, filePath };
+    } catch (err: any) {
+      logger.error(`[FileTestPrintService] pickFile error: ${err.message}`);
+      return { success: false, message: `Could not read file: ${err.message}` };
+    }
+  }
+
+  async pickAndPrint(
+    kind: UploadPrintKind,
+    queueName: string,
+    parentWindow: BrowserWindow | null,
+    macAddress?: string,
+    comPort?: string,
+    brand?: string,
+    labelParams?: LabelPrintParams
+  ): Promise<UploadPrintResult> {
+    if (!queueName) {
+      return { success: false, message: 'No connected printer selected. Connect a Bluetooth printer first.' };
+    }
+
+    let filePath: string;
+    let fileName: string;
+
+    if (labelParams?.filePath) {
+      // File already picked in the preview step — skip the dialog
+      filePath = labelParams.filePath;
+      fileName = path.basename(filePath);
+    } else {
+      const filters =
+        kind === 'IMAGE'
+          ? [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'bmp', 'gif', 'webp'] }]
+          : kind === 'PDF'
+          ? [{ name: 'PDF Documents', extensions: ['pdf'] }]
+          : [{ name: 'Text Files', extensions: ['txt', 'log', 'csv', 'md'] }];
+
+      const dialogOpts: Electron.OpenDialogOptions = { title: `Select a ${kind.toLowerCase()} file to print`, properties: ['openFile'], filters };
+      const pickResult = parentWindow
+        ? await dialog.showOpenDialog(parentWindow, dialogOpts)
+        : await dialog.showOpenDialog(dialogOpts);
+
+      if (pickResult.canceled || pickResult.filePaths.length === 0) {
+        return { success: false, message: 'File selection cancelled.' };
+      }
+
+      filePath = pickResult.filePaths[0];
+      fileName = path.basename(filePath);
+    }
+
+    // Resolve label size for page-size-aware printing
+    const sizeId = labelParams?.labelSizeId || DEFAULT_LABEL_SIZE_ID;
+    const sizeSpec = LABEL_SIZE_MAP[sizeId] || LABEL_SIZE_MAP[DEFAULT_LABEL_SIZE_ID];
+    const pxWidth  = mmToPx(sizeSpec.widthMm);
+    const pxHeight = mmToPx(sizeSpec.heightMm);
+    // webContents.print pageSize is in microns (1mm = 1000um)
+    const pageSizeMicrons = { width: sizeSpec.widthMm * 1000, height: sizeSpec.heightMm * 1000 };
+
+    try {
       // If queue is registered in Windows, use native Windows GDI spooler pipeline
       if (os.platform() === 'win32' && queueName) {
         if (kind === 'PDF') {
-          return await this.printLocalFileUrl(filePath, queueName, fileName, true);
+          return await this.printLocalFileUrl(filePath, queueName, fileName, true, pageSizeMicrons);
         }
         if (kind === 'IMAGE') {
-          const html = this.buildImageHtml(this.toDataUri(filePath));
-          return await this.printHtmlContent(html, queueName, fileName);
+          const html = this.buildImageHtml(this.toDataUri(filePath), labelParams?.scale, labelParams?.offsetX, labelParams?.offsetY, pxWidth, pxHeight, sizeSpec.twoUp, sizeSpec.twoUpGapMm);
+          return await this.printHtmlContent(html, queueName, fileName, pageSizeMicrons);
         }
         const text = fs.readFileSync(filePath, 'utf-8');
         const html = this.buildTextHtml(text);
-        return await this.printHtmlContent(html, queueName, fileName);
+        return await this.printHtmlContent(html, queueName, fileName, pageSizeMicrons);
       }
 
       // Fallback: Direct wireless raster transport (for direct wireless connections without Windows queue)
       if (macAddress || brand === 'JOSH') {
         logger.info(`[FileTestPrintService] Printing ${kind} "${fileName}" via Bluetooth wireless raster transport...`);
-        return await this.printViaBluetooth(filePath, kind, queueName, fileName, macAddress, comPort, brand);
+        return await this.printViaBluetooth(filePath, kind, queueName, fileName, macAddress, comPort, brand, pxWidth, pxHeight, sizeSpec.twoUp, sizeSpec.twoUpGapMm);
       }
 
       if (kind === 'PDF') {
-        return await this.printLocalFileUrl(filePath, queueName, fileName, true);
+        return await this.printLocalFileUrl(filePath, queueName, fileName, true, pageSizeMicrons);
       }
       if (kind === 'IMAGE') {
-        const html = this.buildImageHtml(this.toDataUri(filePath));
-        return await this.printHtmlContent(html, queueName, fileName);
+        const html = this.buildImageHtml(this.toDataUri(filePath), labelParams?.scale, labelParams?.offsetX, labelParams?.offsetY, pxWidth, pxHeight, sizeSpec.twoUp, sizeSpec.twoUpGapMm);
+        return await this.printHtmlContent(html, queueName, fileName, pageSizeMicrons);
       }
       const text = fs.readFileSync(filePath, 'utf-8');
       const html = this.buildTextHtml(text);
-      return await this.printHtmlContent(html, queueName, fileName);
+      return await this.printHtmlContent(html, queueName, fileName, pageSizeMicrons);
     } catch (err: any) {
-      logger.error(`[FileTestPrintService] Error printing ${kind} file "${filePath}": ${err.message}`);
-      return { success: false, message: `Could not print "${fileName}": ${err.message}`, fileName };
+      logger.error(`[FileTestPrintService] Error printing ${kind} file "${filePath!}": ${err.message}`);
+      return { success: false, message: `Could not print "${fileName!}": ${err.message}`, fileName };
     }
   }
 
@@ -97,7 +191,11 @@ export class FileTestPrintService {
     fileName: string,
     macAddress?: string,
     comPort?: string,
-    brand?: string
+    brand?: string,
+    targetWidth = 384,
+    targetHeight = 384,
+    twoUp?: boolean,
+    twoUpGapMm?: number
   ): Promise<UploadPrintResult> {
     let payload: Buffer;
 
@@ -209,20 +307,47 @@ export class FileTestPrintService {
     return `data:image/${mime};base64,${base64}`;
   }
 
-  private buildImageHtml(dataUri: string): string {
+  private buildImageHtml(
+    dataUri: string,
+    scale = 1,
+    offsetX = 0,
+    offsetY = 0,
+    pxWidth = 400,
+    pxHeight = 400,
+    twoUp?: boolean,
+    twoUpGapMm?: number
+  ): string {
+    const gapPx = twoUp ? Math.round(((twoUpGapMm || 3) / 25.4) * 203) : 0;
+    const singleW = twoUp ? Math.round((pxWidth - gapPx) / 2) : pxWidth;
+    const imgStyle = `
+      position: absolute;
+      width: ${Math.round(singleW * scale)}px;
+      height: ${Math.round(pxHeight * scale)}px;
+      object-fit: contain;
+      transform-origin: top left;
+    `;
+    const containerStyle = `
+      width: ${pxWidth}px;
+      height: ${pxHeight}px;
+      position: relative;
+      overflow: hidden;
+      background: #fff;
+    `;
+    const imgTag = `<img src="${dataUri}" style="${imgStyle} left: ${offsetX}px; top: ${offsetY}px;" />`;
+    const twoUpTag = twoUp
+      ? `<img src="${dataUri}" style="${imgStyle} left: ${singleW + gapPx + offsetX}px; top: ${offsetY}px;" />`
+      : '';
     return `<!DOCTYPE html>
-<html>
-<head>
+<html><head>
   <meta charset="utf-8" />
-  <title>SEZNIK Test Print — Image</title>
+  <title>SEZNIK Print — Image</title>
   <style>
-    @page { margin: 4mm; }
-    html, body { margin: 0; padding: 0; height: 100%; display: flex; align-items: center; justify-content: center; background: #fff; }
-    img { max-width: 100%; max-height: 100vh; object-fit: contain; }
+    @page { margin: 0; size: ${pxWidth}px ${pxHeight}px; }
+    html, body { margin: 0; padding: 0; width: ${pxWidth}px; height: ${pxHeight}px; overflow: hidden; background: #fff; }
   </style>
-</head>
-<body><img src="${dataUri}" /></body>
-</html>`;
+</head><body>
+  <div style="${containerStyle}">${imgTag}${twoUpTag}</div>
+</body></html>`;
   }
 
   private buildTextHtml(text: string): string {
@@ -241,7 +366,12 @@ export class FileTestPrintService {
 </html>`;
   }
 
-  private printHtmlContent(html: string, queueName: string, fileName: string): Promise<UploadPrintResult> {
+  private printHtmlContent(
+    html: string,
+    queueName: string,
+    fileName: string,
+    pageSize?: { width: number; height: number }
+  ): Promise<UploadPrintResult> {
     const tempHtmlPath = path.join(os.tmpdir(), `seznik_upload_print_${Date.now()}.html`);
     fs.writeFileSync(tempHtmlPath, html, 'utf-8');
 
@@ -252,20 +382,24 @@ export class FileTestPrintService {
       });
 
       printWin.loadFile(tempHtmlPath).then(() => {
-        printWin.webContents.print(
-          { silent: true, printBackground: true, deviceName: queueName, margins: { marginType: 'none' } },
-          (success, failureReason) => {
-            printWin.close();
-            try { fs.unlinkSync(tempHtmlPath); } catch (e) {}
-            if (success) {
-              logger.info(`[FileTestPrintService] Printed "${fileName}" to "${queueName}" ✓`);
-              resolve({ success: true, message: `"${fileName}" sent to "${queueName}" ✓ Check the physical printout.`, fileName });
-            } else {
-              logger.warn(`[FileTestPrintService] Print notice for "${fileName}": ${failureReason}`);
-              resolve({ success: false, message: `Print failed: ${failureReason}`, fileName });
-            }
+        const printOpts: Electron.WebContentsPrintOptions = {
+          silent: true,
+          printBackground: true,
+          deviceName: queueName,
+          margins: { marginType: 'none' },
+          ...(pageSize ? { pageSize: { width: pageSize.width, height: pageSize.height } } : {}),
+        };
+        printWin.webContents.print(printOpts, (success, failureReason) => {
+          printWin.close();
+          try { fs.unlinkSync(tempHtmlPath); } catch (e) {}
+          if (success) {
+            logger.info(`[FileTestPrintService] Printed "${fileName}" to "${queueName}" ✓`);
+            resolve({ success: true, message: `"${fileName}" sent to "${queueName}" ✓ Check the physical printout.`, fileName });
+          } else {
+            logger.warn(`[FileTestPrintService] Print notice for "${fileName}": ${failureReason}`);
+            resolve({ success: false, message: `Print failed: ${failureReason}`, fileName });
           }
-        );
+        });
       }).catch((err: any) => {
         try { printWin.close(); } catch (e) {}
         try { fs.unlinkSync(tempHtmlPath); } catch (e) {}
@@ -275,7 +409,13 @@ export class FileTestPrintService {
   }
 
   /** Used for PDFs — loads the file directly so Chromium's built-in PDF viewer renders it, then prints that. */
-  private printLocalFileUrl(filePath: string, queueName: string, fileName: string, isPdf: boolean): Promise<UploadPrintResult> {
+  private printLocalFileUrl(
+    filePath: string,
+    queueName: string,
+    fileName: string,
+    isPdf: boolean,
+    pageSize?: { width: number; height: number }
+  ): Promise<UploadPrintResult> {
     return new Promise((resolve) => {
       const printWin = new BrowserWindow({
         show: false,
@@ -286,7 +426,13 @@ export class FileTestPrintService {
       printWin.loadURL(fileUrl).then(() => {
         setTimeout(() => {
           printWin.webContents.print(
-            { silent: true, printBackground: true, deviceName: queueName, margins: { marginType: 'none' } },
+            {
+              silent: true,
+              printBackground: true,
+              deviceName: queueName,
+              margins: { marginType: 'none' },
+              ...(pageSize ? { pageSize: { width: pageSize.width, height: pageSize.height } } : {}),
+            },
             (success, failureReason) => {
               printWin.close();
               if (success) {

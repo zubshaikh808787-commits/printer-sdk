@@ -10,6 +10,8 @@ import {
   BluetoothConnectionState,
   UploadPrintKind,
   UploadPrintResult,
+  PickFileResult,
+  LabelPrintParams,
   V1PrinterProfileBrand,
 } from '@shared/types';
 
@@ -63,6 +65,8 @@ interface PrinterStoreState {
   disconnectBluetoothDevice: () => Promise<void>;
   forgetBluetoothDevice: (deviceId: string) => Promise<void>;
   printBluetoothUploadFile: (kind: UploadPrintKind) => Promise<UploadPrintResult>;
+  pickBluetoothFile: (kind: UploadPrintKind) => Promise<PickFileResult>;
+  printBluetoothFileWithParams: (kind: UploadPrintKind, params: LabelPrintParams) => Promise<UploadPrintResult>;
   checkBluetoothConnection: (comPort?: string) => Promise<void>;
 
   fetchOsPrinters: () => Promise<void>;
@@ -225,6 +229,23 @@ export const usePrinterStore = create<PrinterStoreState>((set, get) => ({
   printBluetoothUploadFile: async (kind: UploadPrintKind) => {
     if (window.seznikApi) {
       const res = await window.seznikApi.printBluetoothUploadFile(kind);
+      set({ toastMessage: res.message });
+      setTimeout(() => set({ toastMessage: null }), 5000);
+      return res;
+    }
+    return { success: false, message: 'Electron API unavailable.' };
+  },
+
+  pickBluetoothFile: async (kind: UploadPrintKind) => {
+    if (window.seznikApi) {
+      return await window.seznikApi.pickBluetoothFile(kind);
+    }
+    return { success: false, message: 'Electron API unavailable.' };
+  },
+
+  printBluetoothFileWithParams: async (kind: UploadPrintKind, params: LabelPrintParams) => {
+    if (window.seznikApi) {
+      const res = await window.seznikApi.printBluetoothFileWithParams(kind, params);
       set({ toastMessage: res.message });
       setTimeout(() => set({ toastMessage: null }), 5000);
       return res;

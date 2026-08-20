@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { Bluetooth, RefreshCw, X, CheckCircle2, AlertTriangle, Printer, Loader2, Image as ImageIcon, FileText, AlignLeft, Receipt, Info, Tag, WifiOff, Settings2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { usePrinterStore } from '../store/usePrinterStore';
-import { UploadPrintKind, UploadPrintResult, V1PrinterProfileBrand } from '@shared/types';
+import { UploadPrintKind, UploadPrintResult, PickFileResult, V1PrinterProfileBrand } from '@shared/types';
+import { PrintPreviewModal } from './PrintPreviewModal';
 
 interface ConnectBluetoothModalProps {
   isOpen: boolean;
@@ -27,12 +28,14 @@ export const ConnectBluetoothModal: React.FC<ConnectBluetoothModalProps> = ({ is
     connectBluetoothDevice,
     triggerBluetoothTestPrint,
     printBluetoothUploadFile,
+    pickBluetoothFile,
     checkBluetoothConnection,
   } = usePrinterStore();
 
   const [uploadingKind, setUploadingKind] = useState<UploadPrintKind | null>(null);
   const [uploadResult, setUploadResult] = useState<UploadPrintResult | null>(null);
   const [isCheckingConnection, setIsCheckingConnection] = useState(false);
+  const [previewData, setPreviewData] = useState<(PickFileResult & { kind: UploadPrintKind }) | null>(null);
   // Per-device brand override — defaults to the name-based guess (device.likelyBrand)
   // but the user can correct it, since a Bluetooth device's advertised name (e.g.
   // "MPT-II") often doesn't say whether it's the JOSH label printer or a VEER receipt printer.
@@ -56,9 +59,18 @@ export const ConnectBluetoothModal: React.FC<ConnectBluetoothModalProps> = ({ is
   const handleUpload = async (kind: UploadPrintKind) => {
     setUploadingKind(kind);
     setUploadResult(null);
-    const res = await printBluetoothUploadFile(kind);
-    setUploadResult(res);
+    // Step 1: open file picker via IPC, receive base64 data back for preview
+    const picked = await pickBluetoothFile(kind);
     setUploadingKind(null);
+    if (!picked.success || !picked.filePath) {
+      // User cancelled or error — show message if there was an actual error
+      if (picked.message && picked.message !== 'File selection cancelled.') {
+        setUploadResult({ success: false, message: picked.message });
+      }
+      return;
+    }
+    // Step 2: open preview modal — printing happens from within the modal
+    setPreviewData({ ...picked, kind });
   };
 
   const handleCheckConnection = async () => {
@@ -80,6 +92,21 @@ export const ConnectBluetoothModal: React.FC<ConnectBluetoothModalProps> = ({ is
   };
 
   return (
+    <>
+      {/* Preview & sizing modal — mounts on top of the Bluetooth modal when a file is picked */}
+      {previewData && previewData.base64 && previewData.mimeType && previewData.fileName && previewData.filePath && (
+        <PrintPreviewModal
+          isOpen={true}
+          onClose={() => setPreviewData(null)}
+          kind={previewData.kind}
+          fileData={{
+            base64: previewData.base64,
+            mimeType: previewData.mimeType,
+            fileName: previewData.fileName,
+            filePath: previewData.filePath,
+          }}
+        />
+      )}
     <AnimatePresence>
       <div
         className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm select-none"
@@ -438,5 +465,6 @@ export const ConnectBluetoothModal: React.FC<ConnectBluetoothModalProps> = ({ is
         </motion.div>
       </div>
     </AnimatePresence>
+    </>
   );
 };

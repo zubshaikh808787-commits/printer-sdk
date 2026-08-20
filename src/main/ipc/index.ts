@@ -12,7 +12,7 @@ import { LoggingService } from '../../services/LoggingService';
 import { PrinterSetupOrchestrator } from '../services/PrinterSetupOrchestrator';
 import { DtpWebService } from '../services/DtpWebService';
 import { BluetoothPrinterService } from '../services/BluetoothPrinterService';
-import { FileTestPrintService, UploadPrintKind } from '../services/FileTestPrintService';
+import { FileTestPrintService, UploadPrintKind, LabelPrintParams } from '../services/FileTestPrintService';
 import logger from '../logger';
 
 export function registerIpcHandlers(
@@ -134,6 +134,30 @@ export function registerIpcHandlers(
   // currently connected via Bluetooth — routes through the same GDI print pipeline
   // Ctrl+P uses, so it proves the exact path any other app on the system will use.
   const fileTestPrintService = new FileTestPrintService();
+
+  // Step 1 of 2: Open file picker and return file data to renderer for preview (no print yet)
+  ipcMain.handle('bluetooth:pickFile', async (_event, kind: UploadPrintKind) => {
+    logger.info(`IPC invoked: bluetooth:pickFile [${kind}]`);
+    return fileTestPrintService.pickFile(kind, mainWindow);
+  });
+
+  // Step 2 of 2: Print with label params confirmed in the preview modal
+  ipcMain.handle('bluetooth:printFileWithParams', async (_event, kind: UploadPrintKind, params: LabelPrintParams) => {
+    logger.info(`IPC invoked: bluetooth:printFileWithParams [${kind}] label=${params.labelSizeId}`);
+    const state = bluetoothService.getState();
+    const targetQueue = state.connectedQueueName || state.connectedComPort || 'LD0801-Y603727493';
+    const res = await fileTestPrintService.pickAndPrint(
+      kind,
+      targetQueue,
+      mainWindow,
+      state.connectedMacAddress || undefined,
+      state.connectedComPort || undefined,
+      state.connectedBrand || 'JOSH',
+      params
+    );
+    await loggingService.logAction('BLUETOOTH_UPLOAD_PRINT_PREVIEW', res.message, res.success ? 'INFO' : 'WARN');
+    return res;
+  });
 
   ipcMain.handle('bluetooth:printUploadFile', async (_event, kind: UploadPrintKind) => {
     logger.info(`IPC invoked: bluetooth:printUploadFile [${kind}]`);

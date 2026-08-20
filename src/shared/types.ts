@@ -309,6 +309,30 @@ export interface UploadPrintResult {
   fileName?: string;
 }
 
+/**
+ * Result of picking a file from disk — returned to the renderer so it can
+ * show a preview before the user confirms the print.
+ */
+export interface PickFileResult {
+  success: boolean;
+  message: string;
+  /** Base64-encoded file contents (for rendering preview in the renderer). */
+  base64?: string;
+  mimeType?: string;
+  fileName?: string;
+  /** Absolute path on disk — passed back when the user confirms print. */
+  filePath?: string;
+}
+
+/** Label size params the renderer sends when the user confirms print from the preview modal. */
+export interface LabelPrintParams {
+  filePath: string;
+  labelSizeId: string;
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+}
+
 export interface BluetoothConnectionState {
   step: BluetoothConnectionStep;
   stepMessage: string;
@@ -383,6 +407,10 @@ export interface SeznikApiBridge {
   disconnectBluetoothDevice: () => Promise<BluetoothConnectionState>;
   forgetBluetoothDevice: (deviceId: string) => Promise<BluetoothConnectionState>;
   printBluetoothUploadFile: (kind: UploadPrintKind) => Promise<UploadPrintResult>;
+  /** Pick a file from disk and return its data to the renderer for preview (no print yet). */
+  pickBluetoothFile: (kind: UploadPrintKind) => Promise<PickFileResult>;
+  /** Print a file whose path was already picked; apply label size / scale / offset from preview. */
+  printBluetoothFileWithParams: (kind: UploadPrintKind, params: LabelPrintParams) => Promise<UploadPrintResult>;
   checkBluetoothConnection: (comPort?: string) => Promise<BluetoothConnectionState>;
   openBluetoothSettings: () => Promise<boolean>;
 
