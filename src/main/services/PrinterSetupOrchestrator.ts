@@ -115,8 +115,7 @@ export class PrinterSetupOrchestrator {
 
       let brand = this.identification.identifyHardware(targetHardware);
 
-      // JOSH active pipeline (defaulting thermal USB hardware to JOSH)
-      if (brand === 'UNSUPPORTED' || brand === 'VEER') {
+      if (brand === 'UNSUPPORTED') {
         brand = 'JOSH';
       }
 
@@ -320,24 +319,18 @@ export class PrinterSetupOrchestrator {
         queueName = targetSaved.name;
         const isJosh = targetSaved.printerType === 'LABEL' || targetSaved.name.toLowerCase().includes('dp27') || targetSaved.name.toLowerCase().includes('josh') || targetSaved.name.toLowerCase().includes('ld0801') || targetSaved.name.toLowerCase().includes('detong');
         const isDev = targetSaved.printerType === 'RECEIPT_AND_LABEL';
-        brand = isJosh ? 'JOSH' : (isDev ? 'DEV' : 'JOSH');
+        const isVeer = targetSaved.printerType === 'RECEIPT' || targetSaved.name.toLowerCase().includes('pos58') || targetSaved.name.toLowerCase().includes('veer') || targetSaved.name.toLowerCase().includes('receipt');
+        brand = isJosh ? 'JOSH' : (isDev ? 'DEV' : (isVeer ? 'VEER' : 'JOSH'));
       } else {
         const driverCheckJosh = await this.driverManager.checkDriverInstalled('JOSH');
-        /* VEER fallback commented out
         const driverCheckVeer = await this.driverManager.checkDriverInstalled('VEER');
-        */
 
         if (driverCheckJosh.installed) {
           queueName = driverCheckJosh.queueName || 'DeTong DP27 Label Printer';
           brand = 'JOSH';
-        /*
         } else if (driverCheckVeer.installed) {
           queueName = driverCheckVeer.queueName || 'POS58 Printer';
           brand = 'VEER';
-        } else {
-          queueName = 'POS58 Printer';
-          brand = 'VEER';
-        */
         } else {
           queueName = 'DeTong DP27 Label Printer';
           brand = 'JOSH';
@@ -345,7 +338,7 @@ export class PrinterSetupOrchestrator {
       }
     }
 
-    if (!brand || brand === 'UNSUPPORTED' || brand === 'VEER') {
+    if (!brand || brand === 'UNSUPPORTED') {
       brand = 'JOSH';
     }
 

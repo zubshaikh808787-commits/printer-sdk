@@ -114,8 +114,21 @@ export class TestPrintService {
     logger.info(`[TestPrintService] Initiating REAL automated physical test print to target queue: "${targetPrinterName}" [Brand: ${profile.brand}]`);
 
     const brand = profile?.brand || 'JOSH';
-    if (brand === 'JOSH' || brand === 'VEER' || brand === 'UNSUPPORTED' as any) {
+    if (brand === 'JOSH') {
       return this.printJoshLabel(targetPrinterName);
+    } else if (brand === 'VEER') {
+      const resReceipt = await this.printVeerReceipt(targetPrinterName);
+      return {
+        success: resReceipt.success,
+        stage: 'JOB_COMPLETED',
+        code: resReceipt.success ? 'SUCCESS' : 'VEER_RECEIPT_PRINT_FAILED',
+        printerName: targetPrinterName,
+        brand: 'VEER',
+        queueName: targetPrinterName,
+        message: resReceipt.success
+          ? `VEER Test Print Success! Printed 58mm Receipt to "${targetPrinterName}".`
+          : `VEER Test Print Error: Receipt (${resReceipt.message}).`,
+      };
     } else if (brand === 'DEV') {
       const resReceipt = await this.printVeerReceipt(targetPrinterName);
       return {
